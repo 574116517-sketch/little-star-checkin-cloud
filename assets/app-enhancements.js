@@ -143,7 +143,8 @@
   let roleName = '孩子', catalogType = '全部', purchaseAsset = 1;
   // Earlier experimental in-page blocks may exist when an old script partially ran.
   // Remove only those generated blocks before mounting the verified version.
-  $$('.points-system, .pet-growth, #pointModal, .mood-chip').forEach(node => node.remove());
+  // 清理基础页遗留的旧材料卡，顶部只保留增强版这一张实时材料卡。
+  $$('.points-system, .pet-growth, #pointModal, .mood-chip, .material-bank').forEach(node => node.remove());
   // 本周小星星先记录当周；跨周累计日常积分会汇总本周打卡与家长调整，兑换后才扣除。
   E.checkinKey = (weekIndex, dayIndex) => `${weekIndex}-${dayIndex}`;
   E.checkinScore = (weekIndex, dayIndex) => {
