@@ -274,16 +274,16 @@
   const greetEntry = $('#pet .pet-card .softbtn.full');
   if (greetEntry) { greetEntry.id = 'ePetGreet'; greetEntry.classList.add('pet-greet-button'); $('.pet-world').after(greetEntry); }
   E.stage = () => s.feedUsed >= 5000 ? 3 : s.feedUsed >= 2500 ? 2 : s.feedUsed >= 1000 ? 1 : 0;
-  // 只保留默认火属性伙伴的一组轻量待机/打招呼视频；升级仍切换宠物图片与刷光特效。
-  // 原始 1248px 视频已转成 576px、15fps、快速起播的 MP4，平板只需要下载约 0.3 MB。
-  E.stageVideo = (_level, action = 'idle') => `assets/fire-lv0-${action}-lite-v2.mp4`;
+  // 四个阶段各有轻量待机/打招呼视频；只加载当前所在页面、当前等级的一段。
+  E.stageVideo = (level, action = 'idle') => `assets/fire-lv${level}-${action}-lite-v2.mp4`;
+  E.stagePoster = level => ['assets/fire-pet-egg.jpg', 'assets/fire-pet-stage1.jpg', 'assets/fire-pet-catalog.jpg', 'assets/fire-pet-final.jpg'][level] || 'assets/fire-pet-egg.jpg';
   // 手机上始终只保留当前页面的一段宠物视频，切页立即释放另一段解码与网络资源。
   E.ensureStageVideo = selector => { const host = $(selector); if (!host) return null; let video = host.querySelector('.pet-stage-video'); if (!video) { video = document.createElement('video'); video.className = 'pet-stage-video'; video.muted = true; video.playsInline = true; video.autoplay = true; video.preload = 'auto'; video.poster = 'assets/fire-pet-egg.jpg'; video.setAttribute('playsinline', ''); video.setAttribute('webkit-playsinline', ''); video.setAttribute('disableRemotePlayback', ''); host.append(video); } return video; };
   E.playVideo = (video, source, loop) => { if (!video) return; if (video.dataset.source !== source) { video.dataset.source = source; video.src = source; } video.loop = loop; video.muted = true; const promise = video.play(); if (promise) promise.catch(() => {}); };
   E.activeVideoSelector = () => !$('#home').hidden ? '#homePet' : !$('#pet').hidden ? '#worldPet' : null;
   E.releaseStageVideo = selector => { const video = $(selector)?.querySelector('.pet-stage-video'); if (!video) return; video.pause(); video.removeAttribute('src'); video.load(); video.remove(); };
-  E.syncStageVideos = level => { const active = E.activeVideoSelector(); ['#homePet','#worldPet'].forEach(selector => { if (selector === active) E.playVideo(E.ensureStageVideo(selector), E.stageVideo(level), true); else E.releaseStageVideo(selector); }); };
-  E.greet = () => { const level = E.stage(), selector = E.activeVideoSelector(); if (!selector) return; const video = E.ensureStageVideo(selector); E.playVideo(video, E.stageVideo(level, 'greet'), false); video.onended = () => E.playVideo(video, E.stageVideo(E.stage()), true); toast(`云纹焰兽正在表演 LV${level} 的打招呼动画！`); };
+  E.syncStageVideos = level => { const active = E.activeVideoSelector(); ['#homePet','#worldPet'].forEach(selector => { if (selector === active) { const video = E.ensureStageVideo(selector); video.poster = E.stagePoster(level); E.playVideo(video, E.stageVideo(level), true); } else E.releaseStageVideo(selector); }); };
+  E.greet = () => { const level = E.stage(), selector = E.activeVideoSelector(); if (!selector) return; const video = E.ensureStageVideo(selector); video.poster = E.stagePoster(level); E.playVideo(video, E.stageVideo(level, 'greet'), false); video.onended = () => E.playVideo(video, E.stageVideo(E.stage()), true); toast(`云纹焰兽正在表演 LV${level} 的打招呼动画！`); };
   E.levelFlash = () => { $('.pet-home, .pet-world') && $$('.pet-home, .pet-world').forEach(host => { const flash = document.createElement('i'); flash.className = 'level-flash'; host.append(flash); setTimeout(() => flash.remove(), 760); }); };
   E.feedOnce = () => { if (s.feedUsed >= 5000) return toast('已经是最终阶段，继续陪伴它吧！'); if (E.material() < 100) return toast('宠物材料不足，完成打卡可获得更多材料'); const before = E.stage(); s.feedUsed += 100; E.render(); if (E.stage() > before) { E.levelFlash(); toast(`升级成功！LV${E.stage()} 已点亮`); } else toast('喂养成功，消耗 100 宠物材料'); };
   let feedHold = null, feedInterval = null, feedLong = false;
