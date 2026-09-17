@@ -337,7 +337,11 @@
       if (seen.has(key)) return;
       seen.add(key); merged.push(record);
     });
-    return merged.slice(0, 100);
+    // 账本和详情统一按最新时间在最上面显示；时间相同则保留刚新增记录的优先级。
+    return merged.sort((a, b) => {
+      const byTime = String(b.time || '').localeCompare(String(a.time || ''), 'zh-CN', { numeric: true });
+      return byTime || String(b.id || '').localeCompare(String(a.id || ''));
+    }).slice(0, 100);
   };
   // 根记录与当前周记录都可能来自不同设备的同步结果。每次渲染先合并两边，
   // 由完整流水重新计算净加减分，避免只显示第一条或把扣分变成 0。
