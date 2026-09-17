@@ -11,6 +11,7 @@
   let applyingRemote = false;
   let saving = false;
   let queuedState = null;
+  let queuedBase = null;
   let saveTimer = null;
   let lastRemoteUpdatedAt = '';
   // `baselineState` 是本设备上一次确认过的家庭版本。保存时只提交相对它发生的
@@ -33,9 +34,22 @@
   const setStatus = (text, kind = '') => { status.textContent = text; status.className = kind; };
   const headers = { apikey: apiKey, Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' };
   const readLocal = () => { try { return JSON.parse(localStorage.getItem(stateKey) || '{}'); } catch { return {}; } };
-  const readPending = () => { try { return JSON.parse(localStorage.getItem(pendingKey) || 'null'); } catch { return null; } };
-  const writePending = state => { try { nativeSetItem(pendingKey, JSON.stringify(state)); } catch { /* 本机空间不足时仍继续尝试同步 */ } };
-  const clearPendingIfCurrent = state => { try { if (same(readPending(), state)) localStorage.removeItem(pendingKey); } catch { /* ignore */ } };
+  // v2 未确认快照同时保存“操作前版本”。旧版只保存了整份状态，已经无法判断它究竟
+  // 是新操作还是过期缓存；为了不让旧缓存覆盖爸爸刚撤回的记录，旧格式只作本机提示，
+  // 不再自动写回云端。
+  const readPending = () => {
+    try {
+      const raw = JSON.parse(localStorage.getItem(pendingKey) || 'null');
+      if (!raw) return null;
+      return raw.version === 2 && raw.state && typeof raw.state === 'object'
+        ? raw
+        : { version: 1, state: raw, base: null, legacy: true };
+    } catch { return null; }
+  };
+  const writePending = state => {
+    try { nativeSetItem(pendingKey, JSON.stringify({ version: 2, state, base: copy(baselineState), time: Date.now() })); } catch { /* 本机空间不足时仍继续尝试同步 */ }
+  };
+  const clearPendingIfCurrent = state => { try { if (same(readPending()?.state, state)) localStorage.removeItem(pendingKey); } catch { /* ignore */ } };
   const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
   const copy = value => {
     try { return JSON.parse(JSON.stringify(value)); } catch { return value; }
@@ -112,7 +126,7 @@
     } catch { /* ignore invalid legacy cache */ }
   };
 
-  async function push(state) {
+  async function push(state, stateBase = baselineState) {
     if (saving) { queuedState = state; return; }
     saving = true;
     setStatus('☁ 正在保存…');
@@ -122,7 +136,7 @@
       if (!latestResponse.ok) throw new Error(`读取最新家庭数据失败 HTTP ${latestResponse.status}`);
       const latestRows = await latestResponse.json();
       const latest = latestRows[0] || { state: {} };
-      const merged = mergeChangedState(latest.state || {}, state, baselineState || latest.state || {});
+      const merged = mergeChangedState(latest.state || {}, state, stateBase || latest.state || {});
       const response = await fetch(`${endpoint}?id=eq.${encodeURIComponent(familyId)}`, {
         method: 'PATCH', headers: { ...headers, Prefer: 'return=representation' }, keepalive: true,
         body: JSON.stringify({ state: merged, updated_at: new Date().toISOString() })
@@ -150,15 +164,16 @@
       console.warn('家庭同步暂不可用', error);
     } finally {
       saving = false;
-      if (queuedState) { const next = queuedState; queuedState = null; queueSave(next, 0); }
+      if (queuedState) { const next = queuedState, nextBase = queuedBase; queuedState = null; queuedBase = null; queueSave(next, 0, nextBase); }
     }
   }
-  function queueSave(state, delay = 0) {
+  function queueSave(state, delay = 0, stateBase = baselineState) {
     // 保存一个快照，防止后续页面渲染继续改写同一对象时污染本次请求。
     try { queuedState = JSON.parse(JSON.stringify(state)); } catch { queuedState = state; }
+    queuedBase = copy(stateBase);
     clearTimeout(saveTimer);
-    if (delay <= 0) { const next = queuedState; queuedState = null; void push(next); return; }
-    saveTimer = setTimeout(() => { const next = queuedState; queuedState = null; push(next); }, delay);
+    if (delay <= 0) { const next = queuedState, nextBase = queuedBase; queuedState = null; queuedBase = null; void push(next, nextBase); return; }
+    saveTimer = setTimeout(() => { const next = queuedState, nextBase = queuedBase; queuedState = null; queuedBase = null; push(next, nextBase); }, delay);
   }
   function replaceState(remote) {
     if (!remote || typeof remote !== 'object' || same(readLocal(), remote)) return;
@@ -180,10 +195,13 @@
       // 只要本机还有一份未获确认的操作，绝不让旧云端快照覆盖它。
       // 这正是 iPad 打卡后立刻刷新会“消失”的根因。
       const pending = readPending();
-      if (pending && typeof pending === 'object') {
+      if (pending?.legacy) {
+        localStorage.removeItem(pendingKey);
+        setStatus('☁ 已跳过旧缓存，正在载入家庭数据', 'warn');
+      } else if (pending?.state && typeof pending.state === 'object') {
         setStatus('☁ 正在恢复刚才的打卡…');
         initialLoadComplete = true;
-        queueSave(pending, 0);
+        queueSave(pending.state, 0, pending.base);
         return;
       }
       const response = await fetch(`${endpoint}?id=eq.${encodeURIComponent(familyId)}&select=state,updated_at`, { headers });
@@ -201,9 +219,9 @@
         const remote = rows[0];
         // 请求开始后，用户也可能刚完成喂养/打卡；再次检查，不能应用这份旧响应。
         const pendingAfterRequest = readPending();
-        if (pendingAfterRequest && typeof pendingAfterRequest === 'object') {
+        if (pendingAfterRequest?.state && !pendingAfterRequest.legacy) {
           setStatus('☁ 正在保存刚才的操作…');
-          queueSave(pendingAfterRequest, 0);
+          queueSave(pendingAfterRequest.state, 0, pendingAfterRequest.base);
           return;
         }
         // 关键：请求可能在一次喂养之前就已经发出。若喂养保存先完成，
@@ -220,7 +238,7 @@
       }
       initialLoadComplete = true;
       const pendingAfterLoad = readPending();
-      if (pendingAfterLoad && typeof pendingAfterLoad === 'object') queueSave(pendingAfterLoad, 0);
+      if (pendingAfterLoad?.state && !pendingAfterLoad.legacy) queueSave(pendingAfterLoad.state, 0, pendingAfterLoad.base);
     } catch (error) {
       initialLoadComplete = true;
       setStatus('☁ 当前离线，数据保存在本机', 'warn');
