@@ -27,6 +27,9 @@
     .pet-speech,.world-speech,.mood-bubble{overflow:hidden}.world-speech{position:relative}.speech-line{display:block;white-space:nowrap;animation:e-text-in .42s ease-out both}.speech-line.out{position:absolute;left:0;right:0;top:0;animation:e-text-out .3s ease-in both}@keyframes e-text-in{from{transform:translateY(115%)}to{transform:translateY(0)}}@keyframes e-text-out{from{transform:translateY(0)}to{transform:translateY(-115%)}}.level-flash{position:absolute;z-index:30;inset:0;pointer-events:none;background:linear-gradient(115deg,transparent 25%,#fff9 47%,#fff 50%,#fff9 53%,transparent 75%);mix-blend-mode:screen;animation:e-level-flash .72s ease-out forwards}@keyframes e-level-flash{from{opacity:0;transform:translateX(-110%)}25%{opacity:1}to{opacity:0;transform:translateX(110%)}}
   `;
   document.head.appendChild(style);
+  const taskCompleteStyle = document.createElement('style');
+  taskCompleteStyle.textContent = '.task-complete{padding:9px 11px;border:2px solid #fff2a8;border-radius:10px;background:linear-gradient(115deg,#ffdf62,#ffac3f);color:#724400;font:inherit;font-weight:900;box-shadow:0 3px #d68c24}';
+  document.head.appendChild(taskCompleteStyle);
   const calendarStyle = document.createElement('style');
   calendarStyle.textContent = '.calendar button{position:relative}.calendar .mark{font-size:20px;line-height:22px}.calendar button.done .mark{color:#e6a126}.calendar button.today{outline:1px solid #1482d2;outline-offset:0}';
   document.head.appendChild(calendarStyle);
@@ -161,7 +164,14 @@
   // 宠物材料只跟随真实打卡 + 家长调整的累计分；现金累计的手动加减/兑换不改变材料。
   // 本周小星星改为 20/40/60… 的展示单位；1 星星分对应 10 宠物材料。
   E.materialTotal = () => E.gross() * 10;
-  E.material = () => Math.max(0, E.materialTotal() - s.feedUsed);
+  // 材料余额独立记账：领取打卡/家长加减分时入账，喂养时扣除。
+  // 不再用“总分 - 历史喂养”倒推，避免旧测试数据让新领取的材料看似消失。
+  E.ensureMaterialBalance = () => {
+    if (!Number.isFinite(Number(s.materialBalance))) s.materialBalance = Math.max(0, E.materialTotal() - Number(s.feedUsed || 0));
+    else s.materialBalance = Math.max(0, Number(s.materialBalance));
+  };
+  E.material = () => { E.ensureMaterialBalance(); return s.materialBalance; };
+  E.changeMaterial = delta => { E.ensureMaterialBalance(); s.materialBalance = Math.max(0, s.materialBalance + Number(delta || 0)); return s.materialBalance; };
   E.mood = () => { const n = s.done.filter(Boolean).length, recent = s.done.slice(Math.max(0, s.day - 2), s.day + 1).filter(Boolean).length; return n >= 5 && Number(s.extra || 0) >= 0 ? '开心' : (s.day >= 2 && recent === 0 ? '低落' : n ? '期待' : '休息'); };
   E.moodText = () => ({ 开心: '主人，你真棒！我又成长了！', 期待: '主人加油，我陪你完成今天的小约定！', 休息: '我在等你回来一起加分。', 低落: '主人，你不理我了吗？我好饿。' })[E.mood()];
   const speechSets = {
@@ -238,7 +248,7 @@
   const parentActions = document.createElement('div'); parentActions.className = 'parent-actions'; parentActions.innerHTML = '<button onclick="openPointControl()">调整积分</button><button onclick="openRedeemControl()">兑换现金</button><button onclick="showPage(\'stats\')">积分统计</button><button onclick="openPetPurchase()">购买宠物</button><button onclick="resetCurrentWeek()">重置本周</button>'; $('.family-switch').append(parentActions);
   // 不再复用旧页面多次覆盖过的按钮 HTML。孩子入口永远使用这一份唯一、明确的清单入口，
   // 点击后只会打开红勾清单，不会直接把当天标记为完成。
-  const childTaskActionsMarkup = '<button class="complete" type="button" data-open-task-checklist>我完成啦！领取星星</button><button class="softbtn" type="button" onclick="miss()">今天还没做到</button>';
+  const childTaskActionsMarkup = '<button class="task-complete" type="button" data-open-task-checklist>我完成啦！领取星星</button><button class="softbtn" type="button" onclick="miss()">今天还没做到</button>';
 
   E.escape = value => String(value).replace(/[&<>'"]/g, char => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', "'":'&#39;', '"':'&quot;' })[char]);
   E.taskGroup = day => day >= 5 ? 'weekend' : 'weekday';
@@ -250,6 +260,14 @@
   document.body.append(taskModal);
   E.renderTaskChecklist = () => { const tasks = E.tasksForDay(s.day), checks = E.taskChecksForToday(); $('#eTaskIntro').textContent = `${names[s.day]}的小约定：每一项完成后打上红勾。`; $('#eTaskCheckList').innerHTML = tasks.map((task, index) => `<div class="task-check-row ${checks[index] ? 'done' : ''}"><button class="task-box" type="button" aria-label="${checks[index] ? '取消完成' : '标记完成'}" onclick="toggleTaskItem(${index})">✓</button><span class="task-label">${E.escape(task.text)}</span></div>`).join('') || '<p class="sub">今天还没有小约定，家长可在管理入口添加。</p>'; const count = checks.filter(Boolean).length; $('#eTaskProgress').textContent = `已完成 ${count} / ${tasks.length} 项`; $('#eTaskClaim').disabled = !tasks.length || !checks.every(Boolean); };
   window.openTaskChecklist = button => { if (s.done[s.day]) return toast('今天已经领取过星星啦！'); E.claimButton = button; E.renderTaskChecklist(); taskModal.hidden = false; };
+  // 按钮自身只执行这一条函数。它在旧页面遗留的 `complete()` 之前中止事件，
+  // 所以无论旧脚本怎样缓存，点击“我完成啦”都只能先显示红勾清单。
+  window.littleStarShowChecklist = (button, event) => {
+    event?.preventDefault();
+    event?.stopImmediatePropagation();
+    window.openTaskChecklist(button);
+    return false;
+  };
   // 用捕获阶段先拦截按钮：基础页面保留了多个历史 `complete()` 处理器，普通点击
   // 会被其中一个抢先执行而直接加分。这里先停止旧处理器，只允许打开红勾清单。
   document.addEventListener('click', event => {
@@ -261,7 +279,7 @@
   }, true);
   window.closeTaskChecklist = () => { taskModal.hidden = true; E.claimButton = null; };
   window.toggleTaskItem = index => { const checks = E.taskChecksForToday(); checks[index] = !checks[index]; s.taskChecks[E.taskKey()] = checks; E.persist(); E.renderTaskChecklist(); };
-  window.claimTaskStars = () => { const checks = E.taskChecksForToday(); if (!checks.length || !checks.every(Boolean)) return toast('完成全部小约定后才能领取星星'); const button = E.claimButton, box = button ? button.getBoundingClientRect() : { left: innerWidth / 2, top: innerHeight * .7, width: 1, height: 1 }, before = E.weekPoints(), gain = pts[s.day]; s.done[s.day] = true; taskModal.hidden = true; E.claimButton = null; render(); $('#score').innerHTML = String(before).padStart(2, '0') + '<small> 颗</small>'; E.fly(box, gain * 10, () => E.roll(before, E.weekPoints())); toast(`太棒啦！完成全部约定，收到了 ${gain} 分（${gain * 10} 颗星星反馈）。`); };
+  window.claimTaskStars = () => { const checks = E.taskChecksForToday(); if (!checks.length || !checks.every(Boolean)) return toast('完成全部小约定后才能领取星星'); const button = E.claimButton, box = button ? button.getBoundingClientRect() : { left: innerWidth / 2, top: innerHeight * .7, width: 1, height: 1 }, before = E.weekPoints(), gain = pts[s.day]; if (!s.done[s.day]) E.changeMaterial(gain * 10); s.done[s.day] = true; taskModal.hidden = true; E.claimButton = null; render(); $('#score').innerHTML = String(before).padStart(2,'0') + '<small> 颗</small>'; E.fly(box, gain * 10, () => E.roll(before, E.weekPoints())); toast(`太棒啦！完成全部约定，收到了 ${gain} 分和 ${gain * 10} 宠物材料。`); };
 
   let taskManagerGroup = 'weekday';
   const taskManager = document.createElement('div'); taskManager.className = 'parent-modal'; taskManager.hidden = true;
@@ -296,7 +314,7 @@
   E.syncStageVideos = level => { const active = E.activeVideoSelector(); ['#homePet','#worldPet'].forEach(selector => { if (selector === active) { const video = E.ensureStageVideo(selector); video.poster = E.stagePoster(level); E.playVideo(video, E.stageVideo(level), true); } else E.releaseStageVideo(selector); }); };
   E.greet = () => { const level = E.stage(), selector = E.activeVideoSelector(); if (!selector) return; const video = E.ensureStageVideo(selector); video.poster = E.stagePoster(level); E.playVideo(video, E.stageVideo(level, 'greet'), false); video.onended = () => E.playVideo(video, E.stageVideo(E.stage()), true); toast(`云纹焰兽正在表演 LV${level} 的打招呼动画！`); };
   E.levelFlash = () => { $('.pet-home, .pet-world') && $$('.pet-home, .pet-world').forEach(host => { const flash = document.createElement('i'); flash.className = 'level-flash'; host.append(flash); setTimeout(() => flash.remove(), 760); }); };
-  E.feedOnce = () => { if (s.feedUsed >= 5000) return toast('已经是最终阶段，继续陪伴它吧！'); if (E.material() < 100) return toast('宠物材料不足，完成打卡可获得更多材料'); const before = E.stage(); s.feedUsed += 100; E.render(); if (E.stage() > before) { E.levelFlash(); toast(`升级成功！LV${E.stage()} 已点亮`); } else toast('喂养成功，消耗 100 宠物材料'); };
+  E.feedOnce = () => { if (s.feedUsed >= 5000) return toast('已经是最终阶段，继续陪伴它吧！'); if (E.material() < 100) return toast('宠物材料不足，完成打卡可获得更多材料'); const before = E.stage(); E.changeMaterial(-100); s.feedUsed += 100; E.render(); if (E.stage() > before) { E.levelFlash(); toast(`升级成功！LV${E.stage()} 已点亮`); } else toast('喂养成功，消耗 100 宠物材料'); };
   let feedHold = null, feedInterval = null, feedLong = false;
   const stopFeedHold = () => { clearTimeout(feedHold); clearInterval(feedInterval); feedHold = null; feedInterval = null; };
   feed.addEventListener('pointerdown', event => { event.preventDefault(); feedLong = false; feedHold = setTimeout(() => { feedLong = true; E.feedOnce(); feedInterval = setInterval(E.feedOnce, 150); }, 380); });
@@ -312,7 +330,7 @@
   window.useFavorite = i => { const x = E.favoriteData(s.favorites[i]); $('#eReason').value = x.reason || ''; if (Number.isFinite(x.n)) $('#eAdjust').value = x.n; };
   window.deleteFavorite = i => { s.favorites.splice(i, 1); E.persist(); E.renderFavorites(); };
   window.saveFavoriteReason = () => { const reason = $('#eReason').value.trim(), n = Number($('#eAdjust').value); if (!reason) return toast('先输入常用标题'); if (!Number.isFinite(n) || !n) return toast('收藏时请同时填写固定加分或扣分'); const exists = s.favorites.some(item => { const x = E.favoriteData(item); return x.reason === reason && x.n === n; }); if (!exists) s.favorites.push({ reason, n }); E.persist(); E.renderFavorites(); toast(`已收藏：${reason} ${n > 0 ? '+' : ''}${n} 分`); };
-  window.applyPointControl = () => { const n = Number($('#eAdjust').value), reason = $('#eReason').value.trim() || '家长积分调整'; if (!Number.isFinite(n) || !n) return toast('请输入有效的加减分'); s.extra = Number(s.extra || 0) + n; s.adjustments.unshift({ n, reason, actor: roleName === '爸爸' || roleName === '妈妈' ? roleName : '家长', time: new Date().toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }) }); s.adjustments = s.adjustments.slice(0, 20); E.render(); closePointControl(); toast(n > 0 ? `已加 ${n} 分` : `已扣除 ${Math.abs(n)} 分`); };
+  window.applyPointControl = () => { const n = Number($('#eAdjust').value), reason = $('#eReason').value.trim() || '家长积分调整'; if (!Number.isFinite(n) || !n) return toast('请输入有效的加减分'); s.extra = Number(s.extra || 0) + n; E.changeMaterial(n * 10); s.adjustments.unshift({ n, reason, actor: roleName === '爸爸' || roleName === '妈妈' ? roleName : '家长', time: new Date().toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }) }); s.adjustments = s.adjustments.slice(0, 20); E.render(); closePointControl(); toast(n > 0 ? `已加 ${n} 分和 ${n * 10} 宠物材料` : `已扣除 ${Math.abs(n)} 分并同步调整材料`); };
   E.parentAdjustments = () => s.adjustments.filter(item => item.reason !== '现金兑换扣除');
   const childAdjustModal = document.createElement('div'); childAdjustModal.className = 'parent-modal'; childAdjustModal.hidden = true;
   childAdjustModal.innerHTML = '<div class="modal-card"><h2>本周家长调整详情</h2><p>这里记录爸爸妈妈为你添加或扣除的小星星。</p><div id="eChildAdjustList" class="stats-list"></div><div class="modal-actions"><button class="primary" onclick="closeChildAdjustmentDetail()">我知道了</button></div></div>';
@@ -431,10 +449,12 @@
     const isDone = $('#eDadCheckinStatus').value === 'done', score = Number($('#eDadCheckinScore').value);
     if (isDone && (!Number.isFinite(score) || score < 0 || score > 1000)) return toast('请填写 0 到 1000 之间的当天分数');
     const week = info.weekIndex === s.weekIndex ? { done: s.done } : (s.weekData[info.weekIndex] || { done: [false, false, false, false, false, false, false], extra: 0, adjustments: [] });
+    const wasDone = !!week.done?.[info.dayIndex], previousScore = wasDone ? E.checkinScore(info.weekIndex, info.dayIndex) : 0;
     week.done = Array.from({ length: 7 }, (_, i) => !!week.done[i]); week.done[info.dayIndex] = isDone;
     if (info.weekIndex === s.weekIndex) s.done = week.done; else s.weekData[info.weekIndex] = { ...week, done: week.done };
     const key = E.checkinKey(info.weekIndex, info.dayIndex);
     const repairStamp = new Date().toLocaleString('zh-CN', { hour12: false });
+    E.changeMaterial(((isDone ? Math.round(score) : 0) - previousScore) * 10);
     if (isDone) {
       s.checkinScores[key] = Math.round(score);
       s.checkinRepairs[key] = { actor: '爸爸', time: repairStamp, reason: $('#eDadCheckinReason').value.trim(), state: 'done' };
@@ -510,7 +530,7 @@
   window.complete = button => { if (button?.dataset?.running) return; window.openTaskChecklist(button); };
   E.fly = (from, count, done) => { count = Math.min(10, Math.max(1, count)); const bank = $('.bank'), target = bank.getBoundingClientRect(), sx = from.left + from.width / 2, sy = from.top + from.height / 2, dx = target.left + target.width / 2 - sx, dy = target.top + target.height / 2 - sy; for (let i = 0; i < count; i++) { const star = document.createElement('b'); star.className = 'star-flight clean'; star.textContent = '★'; star.style.setProperty('--x', (sx + (Math.random() - .5) * 18) + 'px'); star.style.setProperty('--y', (sy + (Math.random() - .5) * 12) + 'px'); star.style.setProperty('--dx', (dx + (Math.random() - .5) * 17) + 'px'); star.style.setProperty('--dy', (dy + (Math.random() - .5) * 14) + 'px'); star.style.setProperty('--size', (i === 0 ? 30 : 14 + Math.random() * 7) + 'px'); star.style.setProperty('--delay', (i / count * .38) + 's'); document.body.append(star); setTimeout(() => star.remove(), 1400); } setTimeout(() => { bank.classList.remove('e-arrive'); void bank.offsetWidth; bank.classList.add('e-arrive'); const r = bank.getBoundingClientRect(); const ring = document.createElement('i'); ring.className = 'score-ripple'; ring.style.setProperty('--x', (r.left + r.width / 2) + 'px'); ring.style.setProperty('--y', (r.top + r.height / 2) + 'px'); document.body.append(ring); setTimeout(() => ring.remove(), 800); done(); }, 1050); };
   E.roll = (a, b) => { const start = performance.now(), duration = 620, el = $('#score'); const frame = now => { const p = Math.min(1, (now - start) / duration), v = Math.round(a + (b - a) * (1 - Math.pow(1 - p, 3))); el.innerHTML = String(v).padStart(2, '0') + '<small> 颗</small>'; if (p < 1) requestAnimationFrame(frame); }; requestAnimationFrame(frame); };
-  window.resetTest = () => { s.done = [false, false, false, false, false, false, false]; s.extra = 0; s.day = 0; s.pet = fireAsset; s.petCoupons = 0; s.adopted = [fireAsset]; s.adjustments = []; s.taskChecks = {}; s.weekIndex = 0; s.weekData = []; s.weekAwards = {}; s.redeemed = 0; s.cashAdjust = 0; s.feedUsed = 0; render(); toast('已还原全部测试数据，默认火属性宠物仍在。'); };
+  window.resetTest = () => { s.done = [false, false, false, false, false, false, false]; s.extra = 0; s.day = 0; s.pet = fireAsset; s.petCoupons = 0; s.adopted = [fireAsset]; s.adjustments = []; s.taskChecks = {}; s.weekIndex = 0; s.weekData = []; s.weekAwards = {}; s.redeemed = 0; s.cashAdjust = 0; s.feedUsed = 0; s.materialBalance = 0; render(); toast('已还原全部测试数据，默认火属性宠物仍在。'); };
   // 图鉴是延迟加载：首页不创建图鉴卡片，也不会请求图鉴图片。
   $('#catalogGrid').innerHTML = '<p class="sub">进入图鉴后加载精灵伙伴…</p>';
   const baseShowPage = window.showPage;

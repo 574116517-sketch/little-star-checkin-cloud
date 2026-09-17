@@ -55,7 +55,7 @@
     try { return JSON.parse(JSON.stringify(value)); } catch { return value; }
   };
   const ignoredLocalFields = new Set(['day', 'weekIndex', 'calendarOffset']);
-  const deltaFields = new Set(['feedUsed', 'extra', 'cashAdjust', 'redeemed', 'petCoupons']);
+  const deltaFields = new Set(['feedUsed', 'materialBalance', 'extra', 'cashAdjust', 'redeemed', 'petCoupons']);
   const logFields = new Set(['adjustments', 'cashLedger']);
   const valueKey = value => {
     if (!value || typeof value !== 'object') return String(value);
