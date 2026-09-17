@@ -238,7 +238,7 @@
   const parentActions = document.createElement('div'); parentActions.className = 'parent-actions'; parentActions.innerHTML = '<button onclick="openPointControl()">调整积分</button><button onclick="openRedeemControl()">兑换现金</button><button onclick="showPage(\'stats\')">积分统计</button><button onclick="openPetPurchase()">购买宠物</button><button onclick="resetCurrentWeek()">重置本周</button>'; $('.family-switch').append(parentActions);
   // 不再复用旧页面多次覆盖过的按钮 HTML。孩子入口永远使用这一份唯一、明确的清单入口，
   // 点击后只会打开红勾清单，不会直接把当天标记为完成。
-  const childTaskActionsMarkup = '<button class="complete" type="button" data-open-task-checklist>我完成啦！领取星星</button><button class="softbtn" type="button" onclick="miss()">今天还没做到</button>';
+  const childTaskActionsMarkup = '<button class="complete" type="button" data-open-task-checklist onclick="openTaskChecklist(this)">我完成啦！领取星星</button><button class="softbtn" type="button" onclick="miss()">今天还没做到</button>';
 
   E.escape = value => String(value).replace(/[&<>'"]/g, char => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', "'":'&#39;', '"':'&quot;' })[char]);
   E.taskGroup = day => day >= 5 ? 'weekend' : 'weekday';
@@ -433,8 +433,16 @@
     week.done = Array.from({ length: 7 }, (_, i) => !!week.done[i]); week.done[info.dayIndex] = isDone;
     if (info.weekIndex === s.weekIndex) s.done = week.done; else s.weekData[info.weekIndex] = { ...week, done: week.done };
     const key = E.checkinKey(info.weekIndex, info.dayIndex);
-    if (isDone) { s.checkinScores[key] = Math.round(score); s.checkinRepairs[key] = { actor: '爸爸', time: new Date().toLocaleString('zh-CN', { hour12: false }), reason: $('#eDadCheckinReason').value.trim() }; }
-    else { delete s.checkinScores[key]; delete s.checkinRepairs[key]; }
+    const repairStamp = new Date().toLocaleString('zh-CN', { hour12: false });
+    if (isDone) {
+      s.checkinScores[key] = Math.round(score);
+      s.checkinRepairs[key] = { actor: '爸爸', time: repairStamp, reason: $('#eDadCheckinReason').value.trim(), state: 'done' };
+    } else {
+      delete s.checkinScores[key];
+      // 撤回也必须留下“已撤回”的标记，而不是把记录直接删除。这样旧网页的完成快照
+      // 即使稍后才上传，也会被这次明确撤回覆盖；重新打开爸爸页面不会重复撤回。
+      s.checkinRepairs[key] = { actor: '爸爸', time: repairStamp, reason: $('#eDadCheckinReason').value.trim(), state: 'undone' };
+    }
     dadCheckinModal.hidden = true; E.render();
     toast(isDone ? `已补记 ${E.shortDate(info.date)} ${Math.round(score)} 分，并同步家庭积分` : `已撤销 ${E.shortDate(info.date)} 的打卡记录，并同步家庭积分`);
   };
