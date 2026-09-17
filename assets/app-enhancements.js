@@ -238,7 +238,7 @@
   const parentActions = document.createElement('div'); parentActions.className = 'parent-actions'; parentActions.innerHTML = '<button onclick="openPointControl()">调整积分</button><button onclick="openRedeemControl()">兑换现金</button><button onclick="showPage(\'stats\')">积分统计</button><button onclick="openPetPurchase()">购买宠物</button><button onclick="resetCurrentWeek()">重置本周</button>'; $('.family-switch').append(parentActions);
   // 不再复用旧页面多次覆盖过的按钮 HTML。孩子入口永远使用这一份唯一、明确的清单入口，
   // 点击后只会打开红勾清单，不会直接把当天标记为完成。
-  const childTaskActionsMarkup = '<button class="complete" type="button" data-open-task-checklist onclick="openTaskChecklist(this)">我完成啦！领取星星</button><button class="softbtn" type="button" onclick="miss()">今天还没做到</button>';
+  const childTaskActionsMarkup = '<button class="complete" type="button" data-open-task-checklist>我完成啦！领取星星</button><button class="softbtn" type="button" onclick="miss()">今天还没做到</button>';
 
   E.escape = value => String(value).replace(/[&<>'"]/g, char => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', "'":'&#39;', '"':'&quot;' })[char]);
   E.taskGroup = day => day >= 5 ? 'weekend' : 'weekday';
@@ -250,14 +250,15 @@
   document.body.append(taskModal);
   E.renderTaskChecklist = () => { const tasks = E.tasksForDay(s.day), checks = E.taskChecksForToday(); $('#eTaskIntro').textContent = `${names[s.day]}的小约定：每一项完成后打上红勾。`; $('#eTaskCheckList').innerHTML = tasks.map((task, index) => `<div class="task-check-row ${checks[index] ? 'done' : ''}"><button class="task-box" type="button" aria-label="${checks[index] ? '取消完成' : '标记完成'}" onclick="toggleTaskItem(${index})">✓</button><span class="task-label">${E.escape(task.text)}</span></div>`).join('') || '<p class="sub">今天还没有小约定，家长可在管理入口添加。</p>'; const count = checks.filter(Boolean).length; $('#eTaskProgress').textContent = `已完成 ${count} / ${tasks.length} 项`; $('#eTaskClaim').disabled = !tasks.length || !checks.every(Boolean); };
   window.openTaskChecklist = button => { if (s.done[s.day]) return toast('今天已经领取过星星啦！'); E.claimButton = button; E.renderTaskChecklist(); taskModal.hidden = false; };
-  // 事件绑定在固定容器上；每次渲染替换按钮后仍然有效，避免旧内联脚本或 Safari 缓存
-  // 让“我完成啦！”失去响应。
-  $('#taskActions').addEventListener('click', event => {
+  // 用捕获阶段先拦截按钮：基础页面保留了多个历史 `complete()` 处理器，普通点击
+  // 会被其中一个抢先执行而直接加分。这里先停止旧处理器，只允许打开红勾清单。
+  document.addEventListener('click', event => {
     const button = event.target.closest('[data-open-task-checklist]');
     if (!button || roleName !== '孩子') return;
     event.preventDefault();
+    event.stopImmediatePropagation();
     window.openTaskChecklist(button);
-  });
+  }, true);
   window.closeTaskChecklist = () => { taskModal.hidden = true; E.claimButton = null; };
   window.toggleTaskItem = index => { const checks = E.taskChecksForToday(); checks[index] = !checks[index]; s.taskChecks[E.taskKey()] = checks; E.persist(); E.renderTaskChecklist(); };
   window.claimTaskStars = () => { const checks = E.taskChecksForToday(); if (!checks.length || !checks.every(Boolean)) return toast('完成全部小约定后才能领取星星'); const button = E.claimButton, box = button ? button.getBoundingClientRect() : { left: innerWidth / 2, top: innerHeight * .7, width: 1, height: 1 }, before = E.weekPoints(), gain = pts[s.day]; s.done[s.day] = true; taskModal.hidden = true; E.claimButton = null; render(); $('#score').innerHTML = String(before).padStart(2, '0') + '<small> 颗</small>'; E.fly(box, gain * 10, () => E.roll(before, E.weekPoints())); toast(`太棒啦！完成全部约定，收到了 ${gain} 分（${gain * 10} 颗星星反馈）。`); };
