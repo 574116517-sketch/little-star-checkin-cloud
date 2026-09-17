@@ -348,6 +348,10 @@
   E.ledgerId = prefix => `${prefix}-${Date.now().toString(36)}-${(++ledgerSequence).toString(36)}`;
   E.favoriteData = item => typeof item === 'string' ? { reason: item, n: null } : item;
   E.adjustmentKey = item => item?.id || `${item?.actor || ''}|${item?.time || ''}|${item?.reason || ''}|${Number(item?.n || 0)}`;
+  E.sortAdjustments = records => [...records].sort((a, b) => {
+    const byTime = String(b.time || '').localeCompare(String(a.time || ''), 'zh-CN', { numeric: true });
+    return byTime || String(b.id || '').localeCompare(String(a.id || ''));
+  });
   E.mergeAdjustments = (...lists) => {
     const seen = new Set(), merged = [];
     lists.flat().filter(Boolean).forEach(item => {
@@ -357,10 +361,7 @@
       seen.add(key); merged.push(record);
     });
     // 账本和详情统一按最新时间在最上面显示；时间相同则保留刚新增记录的优先级。
-    return merged.sort((a, b) => {
-      const byTime = String(b.time || '').localeCompare(String(a.time || ''), 'zh-CN', { numeric: true });
-      return byTime || String(b.id || '').localeCompare(String(a.id || ''));
-    }).slice(0, 100);
+    return E.sortAdjustments(merged).slice(0, 100);
   };
   // 根记录与当前周记录都可能来自不同设备的同步结果。每次渲染先合并两边，
   // 由完整流水重新计算净加减分，避免只显示第一条或把扣分变成 0。
@@ -376,7 +377,7 @@
   window.deleteFavorite = i => { s.favorites.splice(i, 1); E.persist(); E.renderFavorites(); };
   window.saveFavoriteReason = () => { const reason = $('#eReason').value.trim(), n = Number($('#eAdjust').value); if (!reason) return toast('先输入常用标题'); if (!Number.isFinite(n) || !n) return toast('收藏时请同时填写固定加分或扣分'); const exists = s.favorites.some(item => { const x = E.favoriteData(item); return x.reason === reason && x.n === n; }); if (!exists) s.favorites.push({ id: E.ledgerId('fav'), reason, n }); E.persist(); E.renderFavorites(); toast(`已收藏：${reason} ${n > 0 ? '+' : ''}${n} 分`); };
   window.applyPointControl = () => { const n = Number($('#eAdjust').value), reason = $('#eReason').value.trim() || '家长积分调整'; if (!Number.isFinite(n) || !n) return toast('请输入有效的加减分'); E.changeMaterial(n * 10); s.adjustments.unshift({ id: E.ledgerId('adj'), n, reason, actor: roleName === '爸爸' || roleName === '妈妈' ? roleName : '家长', time: new Date().toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }) }); E.reconcileCurrentWeek(); E.render(); closePointControl(); toast(n > 0 ? `已加 ${n} 分和 ${n * 10} 宠物材料` : `已扣除 ${Math.abs(n)} 分并同步调整材料`); };
-  E.parentAdjustments = () => s.adjustments.filter(item => item.reason !== '现金兑换扣除');
+  E.parentAdjustments = () => E.sortAdjustments(s.adjustments.filter(item => item.reason !== '现金兑换扣除'));
   const childAdjustModal = document.createElement('div'); childAdjustModal.className = 'parent-modal'; childAdjustModal.hidden = true;
   childAdjustModal.innerHTML = '<div class="modal-card"><h2>本周家长调整详情</h2><p>这里记录爸爸妈妈为你添加或扣除的小星星。</p><div id="eChildAdjustList" class="stats-list"></div><div class="modal-actions"><button class="primary" onclick="closeChildAdjustmentDetail()">我知道了</button></div></div>';
   document.body.append(childAdjustModal);
@@ -567,7 +568,7 @@
     $('#homePetName').textContent = active.name; $('#worldPetName').textContent = active.name; $('#homePetType').textContent = active.type + ' · 伙伴精灵'; $('#worldPetType').textContent = active.type + ' · 伙伴精灵';
     const greetButton = $('#ePetGreet'); if (greetButton) { greetButton.textContent = `和 ${active.name} 打招呼`; greetButton.onclick = () => E.greet(); }
     $('#eStatsTotal').textContent = daily + ' 分'; $('#eMeTotal').textContent = daily + ' 分'; $('#eStatCheck').textContent = E.gross() - E.parentTotal(); $('#eStatParent').textContent = (E.parentTotal() > 0 ? '+' : '') + E.parentTotal(); $('#eStatMaterial').textContent = material;
-    $('#eLedger').innerHTML = names.map((n, i) => `<div><span>${n} · ${s.done[i] ? '已完成' : '未完成'}</span><b>${s.done[i] ? '+' + E.checkinScore(s.weekIndex, i) : '0'} 分</b></div>`).join(''); $('#eAdjustLedger').innerHTML = s.adjustments.length ? s.adjustments.map(x => `<div><span>${x.reason}<small> · ${x.time}</small></span><b>${x.n > 0 ? '+' : ''}${x.n} 分</b></div>`).join('') : '<div><span>还没有家长调整记录</span><b>—</b></div>';
+    $('#eLedger').innerHTML = names.map((n, i) => `<div><span>${n} · ${s.done[i] ? '已完成' : '未完成'}</span><b>${s.done[i] ? '+' + E.checkinScore(s.weekIndex, i) : '0'} 分</b></div>`).join(''); const sortedAdjustments = E.parentAdjustments(); $('#eAdjustLedger').innerHTML = sortedAdjustments.length ? sortedAdjustments.map(x => `<div><span>${x.reason}<small> · ${x.time}</small></span><b>${x.n > 0 ? '+' : ''}${x.n} 分</b></div>`).join('') : '<div><span>还没有家长调整记录</span><b>—</b></div>';
     E.renderCalendar();
     E.renderFamilyLedger();
     E.weekSave(); E.persist(); E.updateOfficialRolePanel();
