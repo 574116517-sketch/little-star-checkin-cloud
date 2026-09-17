@@ -56,7 +56,7 @@
   };
   const ignoredLocalFields = new Set(['day', 'weekIndex', 'calendarOffset']);
   const deltaFields = new Set(['feedUsed', 'materialBalance', 'extra', 'cashAdjust', 'redeemed', 'petCoupons']);
-  const logFields = new Set(['adjustments', 'cashLedger']);
+  const logFields = new Set(['adjustments', 'cashLedger', 'favorites']);
   const valueKey = value => {
     if (!value || typeof value !== 'object') return String(value);
     return [value.id || '', value.actor || '', value.time || '', value.reason || '', value.n ?? ''].join('|') || JSON.stringify(value);
@@ -79,7 +79,11 @@
     const leaf = path.split('.').pop();
     if (typeof local === 'number' && typeof base === 'number' && deltaFields.has(leaf)) {
       const remoteNumber = Number(remote);
-      return Math.max(0, (Number.isFinite(remoteNumber) ? remoteNumber : 0) + (local - base));
+      const mergedNumber = (Number.isFinite(remoteNumber) ? remoteNumber : 0) + (local - base);
+      // 只有余额类字段不能小于 0；家长加减分和现金调整允许为负数。
+      return ['feedUsed', 'materialBalance', 'redeemed', 'petCoupons'].includes(leaf)
+        ? Math.max(0, mergedNumber)
+        : mergedNumber;
     }
     if (Array.isArray(local)) {
       if (logFields.has(leaf)) return mergeLog(Array.isArray(remote) ? remote : [], local);

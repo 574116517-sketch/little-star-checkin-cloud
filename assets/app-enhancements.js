@@ -325,12 +325,34 @@
   document.body.append(modal);
   window.openPointControl = () => { if (roleName === '孩子') return toast('请切换到爸爸或妈妈测试窗口后管理积分'); modal.hidden = false; $('#eAdjust').value = ''; $('#eReason').value = ''; E.renderFavorites(); };
   window.closePointControl = () => modal.hidden = true;
+  let ledgerSequence = 0;
+  E.ledgerId = prefix => `${prefix}-${Date.now().toString(36)}-${(++ledgerSequence).toString(36)}`;
   E.favoriteData = item => typeof item === 'string' ? { reason: item, n: null } : item;
+  E.adjustmentKey = item => item?.id || `${item?.actor || ''}|${item?.time || ''}|${item?.reason || ''}|${Number(item?.n || 0)}`;
+  E.mergeAdjustments = (...lists) => {
+    const seen = new Set(), merged = [];
+    lists.flat().filter(Boolean).forEach(item => {
+      const record = typeof item === 'object' ? item : { reason: String(item), n: 0 };
+      const key = E.adjustmentKey(record);
+      if (seen.has(key)) return;
+      seen.add(key); merged.push(record);
+    });
+    return merged.slice(0, 100);
+  };
+  // 根记录与当前周记录都可能来自不同设备的同步结果。每次渲染先合并两边，
+  // 由完整流水重新计算净加减分，避免只显示第一条或把扣分变成 0。
+  E.reconcileCurrentWeek = () => {
+    const week = s.weekData?.[s.weekIndex];
+    const records = E.mergeAdjustments(s.adjustments || [], week?.adjustments || []);
+    s.adjustments = records;
+    s.extra = records.reduce((sum, item) => sum + Number(item.n || 0), 0);
+    return records;
+  };
   E.renderFavorites = () => { $('#eFavorites').innerHTML = s.favorites.map((item, i) => { const x = E.favoriteData(item), label = `${x.reason.slice(0, 6)}${x.reason.length > 6 ? '…' : ''}${Number.isFinite(x.n) ? (x.n > 0 ? ' +' : ' ') + x.n : ''}`; return `<button title="${x.reason}${Number.isFinite(x.n) ? ' · ' + (x.n > 0 ? '+' : '') + x.n + ' 分' : ''}" onclick="useFavorite(${i})">★ ${label}</button><button class="remove" title="删除收藏" onclick="deleteFavorite(${i})">×</button>`; }).join(''); };
   window.useFavorite = i => { const x = E.favoriteData(s.favorites[i]); $('#eReason').value = x.reason || ''; if (Number.isFinite(x.n)) $('#eAdjust').value = x.n; };
   window.deleteFavorite = i => { s.favorites.splice(i, 1); E.persist(); E.renderFavorites(); };
-  window.saveFavoriteReason = () => { const reason = $('#eReason').value.trim(), n = Number($('#eAdjust').value); if (!reason) return toast('先输入常用标题'); if (!Number.isFinite(n) || !n) return toast('收藏时请同时填写固定加分或扣分'); const exists = s.favorites.some(item => { const x = E.favoriteData(item); return x.reason === reason && x.n === n; }); if (!exists) s.favorites.push({ reason, n }); E.persist(); E.renderFavorites(); toast(`已收藏：${reason} ${n > 0 ? '+' : ''}${n} 分`); };
-  window.applyPointControl = () => { const n = Number($('#eAdjust').value), reason = $('#eReason').value.trim() || '家长积分调整'; if (!Number.isFinite(n) || !n) return toast('请输入有效的加减分'); s.extra = Number(s.extra || 0) + n; E.changeMaterial(n * 10); s.adjustments.unshift({ n, reason, actor: roleName === '爸爸' || roleName === '妈妈' ? roleName : '家长', time: new Date().toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }) }); s.adjustments = s.adjustments.slice(0, 20); E.render(); closePointControl(); toast(n > 0 ? `已加 ${n} 分和 ${n * 10} 宠物材料` : `已扣除 ${Math.abs(n)} 分并同步调整材料`); };
+  window.saveFavoriteReason = () => { const reason = $('#eReason').value.trim(), n = Number($('#eAdjust').value); if (!reason) return toast('先输入常用标题'); if (!Number.isFinite(n) || !n) return toast('收藏时请同时填写固定加分或扣分'); const exists = s.favorites.some(item => { const x = E.favoriteData(item); return x.reason === reason && x.n === n; }); if (!exists) s.favorites.push({ id: E.ledgerId('fav'), reason, n }); E.persist(); E.renderFavorites(); toast(`已收藏：${reason} ${n > 0 ? '+' : ''}${n} 分`); };
+  window.applyPointControl = () => { const n = Number($('#eAdjust').value), reason = $('#eReason').value.trim() || '家长积分调整'; if (!Number.isFinite(n) || !n) return toast('请输入有效的加减分'); E.changeMaterial(n * 10); s.adjustments.unshift({ id: E.ledgerId('adj'), n, reason, actor: roleName === '爸爸' || roleName === '妈妈' ? roleName : '家长', time: new Date().toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }) }); E.reconcileCurrentWeek(); E.render(); closePointControl(); toast(n > 0 ? `已加 ${n} 分和 ${n * 10} 宠物材料` : `已扣除 ${Math.abs(n)} 分并同步调整材料`); };
   E.parentAdjustments = () => s.adjustments.filter(item => item.reason !== '现金兑换扣除');
   const childAdjustModal = document.createElement('div'); childAdjustModal.className = 'parent-modal'; childAdjustModal.hidden = true;
   childAdjustModal.innerHTML = '<div class="modal-card"><h2>本周家长调整详情</h2><p>这里记录爸爸妈妈为你添加或扣除的小星星。</p><div id="eChildAdjustList" class="stats-list"></div><div class="modal-actions"><button class="primary" onclick="closeChildAdjustmentDetail()">我知道了</button></div></div>';
@@ -380,7 +402,7 @@
   E.catalog = q => { if ($('#catalog').hidden) { E.catalogDirty = true; return; } const list = roster.filter(p => (catalogType === '全部' || p.type === catalogType) && p.name.includes(q || '')); $('#catalogGrid').innerHTML = list.map((p, i) => { const owned = s.adopted.includes(p.asset); if (owned) return `<button class="catalog-card owned" onclick="showOwnedPet(${p.asset})"><span class="collect-badge">✓</span><span class="pet-number">${p.type}</span><span class="stage-art ${p.art ? 'fire-art' : ''}" style="${E.artStyle(p)}"></span><strong>${p.name}</strong><small>${p.gift ? '默认赠送' : '已收集'}</small></button>`; const lock = i % 2 ? 'assets/catalog-cell-lock.png' : 'assets/catalog-cell-question.png'; return `<button class="catalog-card locked" onclick="showLockedPet(${p.asset})"><span class="stage-art" style="background-image:url('${lock}')"></span><strong>???</strong><small>未收集</small></button>`; }).join(''); $('#catalogCount').innerHTML = `已收集 <b>${s.adopted.length}</b> / ${roster.length}<br>彩色为已收集 · 剪影锁定为未收集`; E.catalogLoaded = true; E.catalogDirty = false; };
   window.filterCatalog = q => E.catalog(q);
 
-  E.weekSave = () => { s.weekData[s.weekIndex] = { done: [...s.done], extra: Number(s.extra || 0), adjustments: [...s.adjustments] }; };
+  E.weekSave = () => { const records = E.reconcileCurrentWeek(); s.weekData[s.weekIndex] = { done: [...s.done], extra: Number(s.extra || 0), adjustments: [...records] }; };
   E.weekLoad = i => { E.weekSave(); s.weekIndex = Math.max(0, i); const w = s.weekData[s.weekIndex] || { done: [false, false, false, false, false, false, false], extra: 0, adjustments: [] }; s.done = [...w.done]; s.extra = Number(w.extra || 0); s.adjustments = [...w.adjustments]; s.day = 0; E.render(); toast(`已切换到第 ${s.weekIndex + 1} 周测试`); };
   window.switchTestWeek = d => E.weekLoad(s.weekIndex + d);
   window.resetCurrentWeek = () => { if (roleName === '孩子') return toast('请切换至爸爸或妈妈窗口'); s.done = [false, false, false, false, false, false, false]; s.extra = 0; s.adjustments = []; Object.keys(s.taskChecks).filter(key => key.startsWith(`${s.weekIndex}-`)).forEach(key => delete s.taskChecks[key]); s.day = 0; E.weekSave(); E.render(); toast('本周测试数据已重置'); };
