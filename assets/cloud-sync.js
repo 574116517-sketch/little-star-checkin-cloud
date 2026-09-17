@@ -13,6 +13,10 @@
   let queuedState = null;
   let saveTimer = null;
   let lastRemoteUpdatedAt = '';
+  // `baselineState` 是本设备上一次确认过的家庭版本。保存时只提交相对它发生的
+  // 变化，而不是用某一台设备的整份旧快照覆盖全家数据。
+  let baselineState = null;
+  let initialLoadComplete = false;
 
   // 正式云端版不展示开发测试控件；离线复刻版仍保留这些测试能力。
   document.querySelector('.reset-test-bar')?.remove();
@@ -33,13 +37,79 @@
   const writePending = state => { try { nativeSetItem(pendingKey, JSON.stringify(state)); } catch { /* 本机空间不足时仍继续尝试同步 */ } };
   const clearPendingIfCurrent = state => { try { if (same(readPending(), state)) localStorage.removeItem(pendingKey); } catch { /* ignore */ } };
   const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+  const copy = value => {
+    try { return JSON.parse(JSON.stringify(value)); } catch { return value; }
+  };
+  const ignoredLocalFields = new Set(['day', 'weekIndex', 'calendarOffset']);
+  const deltaFields = new Set(['feedUsed', 'extra', 'cashAdjust', 'redeemed', 'petCoupons']);
+  const logFields = new Set(['adjustments', 'cashLedger']);
+  const valueKey = value => {
+    if (!value || typeof value !== 'object') return String(value);
+    return [value.id || '', value.actor || '', value.time || '', value.reason || '', value.n ?? ''].join('|') || JSON.stringify(value);
+  };
+  const mergeLog = (remote = [], local = []) => {
+    const seen = new Set();
+    return [...remote, ...local].filter(item => {
+      const key = valueKey(item);
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    }).slice(0, 100);
+  };
+  // 合并规则：没有在本机变动过的字段，始终保留云端新值；本机刚变动的字段才写回。
+  // `done[周几]`、任务勾选、历史周数据均按格/按字段合并，因此爸爸打开网页不会把
+  // 孩子刚完成的其它日期清空。喂养/加分等累计数值则合并增量，避免两端操作互相吃掉。
+  const mergeChangedState = (remote, local, base, path = '') => {
+    if (same(local, base)) return copy(remote);
+    if (ignoredLocalFields.has(path)) return copy(remote === undefined ? local : remote);
+    const leaf = path.split('.').pop();
+    if (typeof local === 'number' && typeof base === 'number' && deltaFields.has(leaf)) {
+      const remoteNumber = Number(remote);
+      return Math.max(0, (Number.isFinite(remoteNumber) ? remoteNumber : 0) + (local - base));
+    }
+    if (Array.isArray(local)) {
+      if (logFields.has(leaf)) return mergeLog(Array.isArray(remote) ? remote : [], local);
+      if (leaf === 'adopted') return [...new Set([...(Array.isArray(remote) ? remote : []), ...local])];
+      const remoteArray = Array.isArray(remote) ? remote : [];
+      const baseArray = Array.isArray(base) ? base : [];
+      const length = Math.max(local.length, remoteArray.length, baseArray.length);
+      const merged = [];
+      for (let index = 0; index < length; index++) {
+        const nextPath = path ? `${path}.${index}` : String(index);
+        const localValue = local[index];
+        const remoteValue = remoteArray[index];
+        const baseValue = baseArray[index];
+        if (localValue === undefined && baseValue === undefined) { if (remoteValue !== undefined) merged[index] = copy(remoteValue); }
+        else merged[index] = mergeChangedState(remoteValue, localValue, baseValue, nextPath);
+      }
+      return merged;
+    }
+    if (local && typeof local === 'object') {
+      const remoteObject = remote && typeof remote === 'object' ? remote : {};
+      const baseObject = base && typeof base === 'object' ? base : {};
+      const merged = {};
+      new Set([...Object.keys(remoteObject), ...Object.keys(local), ...Object.keys(baseObject)]).forEach(key => {
+        const nextPath = path ? `${path}.${key}` : key;
+        if (Object.prototype.hasOwnProperty.call(local, key)) merged[key] = mergeChangedState(remoteObject[key], local[key], baseObject[key], nextPath);
+        else if (Object.prototype.hasOwnProperty.call(remoteObject, key)) merged[key] = copy(remoteObject[key]);
+      });
+      return merged;
+    }
+    return copy(local);
+  };
 
   const nativeSetItem = localStorage.setItem.bind(localStorage);
   localStorage.setItem = (key, value) => {
     nativeSetItem(key, value);
     if (key !== stateKey || applyingRemote) return;
     // 分数调整后会立即开始保存；即使用户紧接着刷新，keepalive 请求也会继续完成。
-    try { const snapshot = JSON.parse(value); writePending(snapshot); queueSave(snapshot, 0); } catch { /* ignore invalid legacy cache */ }
+    try {
+      const snapshot = JSON.parse(value);
+      writePending(snapshot);
+      // 首次读取家庭状态还没完成时，只暂存用户刚做的操作；读取完成后会和云端合并，
+      // 而不是把本机可能遗留的旧数据直接推上去。
+      if (initialLoadComplete) queueSave(snapshot, 0);
+    } catch { /* ignore invalid legacy cache */ }
   };
 
   async function push(state) {
@@ -47,13 +117,32 @@
     saving = true;
     setStatus('☁ 正在保存…');
     try {
+      // 写入前再取一次最新云端状态。这一步是三台设备能安全同时操作的关键。
+      const latestResponse = await fetch(`${endpoint}?id=eq.${encodeURIComponent(familyId)}&select=state,updated_at`, { headers });
+      if (!latestResponse.ok) throw new Error(`读取最新家庭数据失败 HTTP ${latestResponse.status}`);
+      const latestRows = await latestResponse.json();
+      const latest = latestRows[0] || { state: {} };
+      const merged = mergeChangedState(latest.state || {}, state, baselineState || latest.state || {});
       const response = await fetch(`${endpoint}?id=eq.${encodeURIComponent(familyId)}`, {
         method: 'PATCH', headers: { ...headers, Prefer: 'return=representation' }, keepalive: true,
-        body: JSON.stringify({ state, updated_at: new Date().toISOString() })
+        body: JSON.stringify({ state: merged, updated_at: new Date().toISOString() })
       });
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       const rows = await response.json();
       lastRemoteUpdatedAt = rows[0]?.updated_at || lastRemoteUpdatedAt;
+      baselineState = copy(rows[0]?.state || merged);
+      // 本机也立刻使用合并后的版本，确保爸爸/妈妈页面能看见孩子刚完成的内容。
+      if (!same(readLocal(), baselineState)) {
+        applyingRemote = true;
+        try {
+          Object.keys(s).forEach(key => delete s[key]);
+          Object.assign(s, baselineState);
+          window.littleStarNormalizeState?.();
+          window.syncRealDate?.();
+          nativeSetItem(stateKey, JSON.stringify(s));
+          render();
+        } finally { applyingRemote = false; }
+      }
       clearPendingIfCurrent(state);
       setStatus('☁ 家庭数据已同步', 'ok');
     } catch (error) {
@@ -83,6 +172,7 @@
       window.syncRealDate?.();
       nativeSetItem(stateKey, JSON.stringify(s));
       render();
+      baselineState = copy(s);
     } finally { applyingRemote = false; }
   }
   async function pull(firstLoad = false) {
@@ -92,6 +182,7 @@
       const pending = readPending();
       if (pending && typeof pending === 'object') {
         setStatus('☁ 正在恢复刚才的打卡…');
+        initialLoadComplete = true;
         queueSave(pending, 0);
         return;
       }
@@ -104,6 +195,7 @@
         if (!created.ok) throw new Error(`初始化失败 HTTP ${created.status}`);
         const data = await created.json();
         lastRemoteUpdatedAt = data[0]?.updated_at || '';
+        baselineState = copy(data[0]?.state || initial);
         setStatus('☁ 已建立家庭同步', 'ok');
       } else {
         const remote = rows[0];
@@ -126,7 +218,11 @@
         replaceState(remote.state);
         setStatus(firstLoad ? '☁ 已载入家庭数据' : '☁ 家庭数据已同步', 'ok');
       }
+      initialLoadComplete = true;
+      const pendingAfterLoad = readPending();
+      if (pendingAfterLoad && typeof pendingAfterLoad === 'object') queueSave(pendingAfterLoad, 0);
     } catch (error) {
+      initialLoadComplete = true;
       setStatus('☁ 当前离线，数据保存在本机', 'warn');
       console.warn('家庭同步读取失败', error);
     }
