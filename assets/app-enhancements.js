@@ -27,6 +27,14 @@
     .pet-speech,.world-speech,.mood-bubble{overflow:hidden}.world-speech{position:relative}.speech-line{display:block;white-space:nowrap;animation:e-text-in .42s ease-out both}.speech-line.out{position:absolute;left:0;right:0;top:0;animation:e-text-out .3s ease-in both}@keyframes e-text-in{from{transform:translateY(115%)}to{transform:translateY(0)}}@keyframes e-text-out{from{transform:translateY(0)}to{transform:translateY(-115%)}}.level-flash{position:absolute;z-index:30;inset:0;pointer-events:none;background:linear-gradient(115deg,transparent 25%,#fff9 47%,#fff 50%,#fff9 53%,transparent 75%);mix-blend-mode:screen;animation:e-level-flash .72s ease-out forwards}@keyframes e-level-flash{from{opacity:0;transform:translateX(-110%)}25%{opacity:1}to{opacity:0;transform:translateX(110%)}}
   `;
   document.head.appendChild(style);
+  // 基础页面曾遗留一个会直接加星星的旧 `.complete` 捕获监听器。
+  // 页面加载完成前先把原按钮切成唯一的清单入口，避免旧监听器抢先执行而漏发宠物材料。
+  document.querySelectorAll('#taskActions button.complete').forEach(button => {
+    button.className = 'task-complete';
+    button.type = 'button';
+    button.removeAttribute('onclick');
+    button.setAttribute('data-open-task-checklist', '');
+  });
   const taskCompleteStyle = document.createElement('style');
   taskCompleteStyle.textContent = '.task-complete{padding:9px 11px;border:2px solid #fff2a8;border-radius:10px;background:linear-gradient(115deg,#ffdf62,#ffac3f);color:#724400;font:inherit;font-weight:900;box-shadow:0 3px #d68c24}';
   document.head.appendChild(taskCompleteStyle);
@@ -113,6 +121,7 @@
     s.taskTemplates.weekend = normalizeTaskList(s.taskTemplates.weekend, defaultTaskTemplates.weekend);
     s.taskChecks = s.taskChecks && typeof s.taskChecks === 'object' ? s.taskChecks : {};
     s.checkinScores = s.checkinScores && typeof s.checkinScores === 'object' ? s.checkinScores : {};
+    s.checkinMaterialAwards = s.checkinMaterialAwards && typeof s.checkinMaterialAwards === 'object' ? s.checkinMaterialAwards : {};
     s.checkinRepairs = s.checkinRepairs && typeof s.checkinRepairs === 'object' ? s.checkinRepairs : {};
     const profileName = typeof s.profileName === 'string' ? s.profileName.trim() : '';
     s.profileName = profileName && !['undefined', 'null'].includes(profileName.toLowerCase()) ? profileName : initialProfileName;
@@ -172,6 +181,16 @@
   };
   E.material = () => { E.ensureMaterialBalance(); return s.materialBalance; };
   E.changeMaterial = delta => { E.ensureMaterialBalance(); s.materialBalance = Math.max(0, s.materialBalance + Number(delta || 0)); return s.materialBalance; };
+  // 每天的打卡材料独立留存已发放标记：同一次领取无论触发多少次渲染，只会入账一次。
+  E.awardCheckinMaterial = (weekIndex, dayIndex, score) => {
+    const key = E.checkinKey(weekIndex, dayIndex);
+    s.checkinMaterialAwards = s.checkinMaterialAwards && typeof s.checkinMaterialAwards === 'object' ? s.checkinMaterialAwards : {};
+    if (Number.isFinite(Number(s.checkinMaterialAwards[key]))) return false;
+    const amount = Math.max(0, Number(score || 0) * 10);
+    E.changeMaterial(amount);
+    s.checkinMaterialAwards[key] = amount;
+    return true;
+  };
   E.mood = () => { const n = s.done.filter(Boolean).length, recent = s.done.slice(Math.max(0, s.day - 2), s.day + 1).filter(Boolean).length; return n >= 5 && Number(s.extra || 0) >= 0 ? '开心' : (s.day >= 2 && recent === 0 ? '低落' : n ? '期待' : '休息'); };
   E.moodText = () => ({ 开心: '主人，你真棒！我又成长了！', 期待: '主人加油，我陪你完成今天的小约定！', 休息: '我在等你回来一起加分。', 低落: '主人，你不理我了吗？我好饿。' })[E.mood()];
   const speechSets = {
@@ -279,7 +298,7 @@
   }, true);
   window.closeTaskChecklist = () => { taskModal.hidden = true; E.claimButton = null; };
   window.toggleTaskItem = index => { const checks = E.taskChecksForToday(); checks[index] = !checks[index]; s.taskChecks[E.taskKey()] = checks; E.persist(); E.renderTaskChecklist(); };
-  window.claimTaskStars = () => { const checks = E.taskChecksForToday(); if (!checks.length || !checks.every(Boolean)) return toast('完成全部小约定后才能领取星星'); const button = E.claimButton, box = button ? button.getBoundingClientRect() : { left: innerWidth / 2, top: innerHeight * .7, width: 1, height: 1 }, before = E.weekPoints(), gain = pts[s.day]; if (!s.done[s.day]) E.changeMaterial(gain * 10); s.done[s.day] = true; taskModal.hidden = true; E.claimButton = null; render(); $('#score').innerHTML = String(before).padStart(2,'0') + '<small> 颗</small>'; E.fly(box, gain * 10, () => E.roll(before, E.weekPoints())); toast(`太棒啦！完成全部约定，收到了 ${gain} 分和 ${gain * 10} 宠物材料。`); };
+  window.claimTaskStars = () => { const checks = E.taskChecksForToday(); if (!checks.length || !checks.every(Boolean)) return toast('完成全部小约定后才能领取星星'); const button = E.claimButton, box = button ? button.getBoundingClientRect() : { left: innerWidth / 2, top: innerHeight * .7, width: 1, height: 1 }, before = E.weekPoints(), gain = pts[s.day]; if (!s.done[s.day]) E.awardCheckinMaterial(s.weekIndex, s.day, gain); s.done[s.day] = true; taskModal.hidden = true; E.claimButton = null; render(); $('#score').innerHTML = String(before).padStart(2,'0') + '<small> 颗</small>'; E.fly(box, gain * 10, () => E.roll(before, E.weekPoints())); toast(`太棒啦！完成全部约定，收到了 ${gain} 分和 ${gain * 10} 宠物材料。`); };
 
   let taskManagerGroup = 'weekday';
   const taskManager = document.createElement('div'); taskManager.className = 'parent-modal'; taskManager.hidden = true;
