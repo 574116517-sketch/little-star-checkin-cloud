@@ -325,6 +325,9 @@
   // 四个阶段各有轻量待机/打招呼视频；只加载当前所在页面、当前等级的一段。
   E.stageVideo = (level, action = 'idle') => `assets/fire-lv${level}-${action}-lite-v2.mp4`;
   E.stagePoster = level => ['assets/fire-pet-egg.jpg', 'assets/fire-pet-stage1.jpg', 'assets/fire-pet-catalog.jpg', 'assets/fire-pet-final.jpg'][level] || 'assets/fire-pet-egg.jpg';
+  // 基础页曾用“材料总数”选择火属性宠物外观；这会让材料到账时看似自动升级。
+  // 无论旧入口如何调用，阶段图片都只能由手动喂养累计 feedUsed 决定。
+  window.fireStageImage = () => ['fire-pet-egg.jpg', 'fire-pet-stage1.jpg', 'fire-pet-catalog.jpg', 'fire-pet-final.jpg'][E.stage()] || 'fire-pet-egg.jpg';
   // 手机上始终只保留当前页面的一段宠物视频，切页立即释放另一段解码与网络资源。
   E.ensureStageVideo = selector => { const host = $(selector); if (!host) return null; let video = host.querySelector('.pet-stage-video'); if (!video) { video = document.createElement('video'); video.className = 'pet-stage-video'; video.muted = true; video.playsInline = true; video.autoplay = true; video.preload = 'auto'; video.poster = 'assets/fire-pet-egg.jpg'; video.setAttribute('playsinline', ''); video.setAttribute('webkit-playsinline', ''); video.setAttribute('disableRemotePlayback', ''); host.append(video); } return video; };
   E.playVideo = (video, source, loop) => { if (!video) return; if (video.dataset.source !== source) { video.dataset.source = source; video.src = source; } video.loop = loop; video.muted = true; const promise = video.play(); if (promise) promise.catch(() => {}); };
