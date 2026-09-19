@@ -18,6 +18,14 @@
   // 变化，而不是用某一台设备的整份旧快照覆盖全家数据。
   let baselineState = null;
   let initialLoadComplete = false;
+  const petBalanceResetVersion = 1;
+  const applyPetBalanceReset = state => {
+    if (!state || typeof state !== 'object' || Number(state.petBalanceResetVersion || 0) >= petBalanceResetVersion) return false;
+    state.materialBalance = 0;
+    state.petCoupons = 1;
+    state.petBalanceResetVersion = petBalanceResetVersion;
+    return true;
+  };
 
   // 正式云端版不展示开发测试控件；离线复刻版仍保留这些测试能力。
   document.querySelector('.reset-test-bar')?.remove();
@@ -226,6 +234,14 @@
         if (pendingAfterRequest?.state && !pendingAfterRequest.legacy) {
           setStatus('☁ 正在保存刚才的操作…');
           queueSave(pendingAfterRequest.state, 0, pendingAfterRequest.base);
+          return;
+        }
+        const beforePetBalanceReset = copy(remote.state || {});
+        if (applyPetBalanceReset(remote.state)) {
+          replaceState(remote.state);
+          initialLoadComplete = true;
+          queueSave(remote.state, 0, beforePetBalanceReset);
+          setStatus('☁ 宠物材料已清零，宠物券保留 1 张', 'ok');
           return;
         }
         // 关键：请求可能在一次喂养之前就已经发出。若喂养保存先完成，
