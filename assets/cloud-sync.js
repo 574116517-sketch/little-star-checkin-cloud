@@ -26,7 +26,7 @@
     state.petBalanceResetVersion = petBalanceResetVersion;
     return true;
   };
-  const petAssetResetVersion = 1;
+  const petAssetResetVersion = 2;
   const applyPetAssetReset = state => {
     if (!state || typeof state !== 'object' || Number(state.petAssetResetVersion || 0) >= petAssetResetVersion) return false;
     state.adopted = [0];
@@ -157,6 +157,12 @@
       const latestRows = await latestResponse.json();
       const latest = latestRows[0] || { state: {} };
       const merged = mergeChangedState(latest.state || {}, state, stateBase || latest.state || {});
+      // 清理宠物资产属于明确的替换操作，不能使用 adopted 的并集合并规则。
+      if (Number(state?.petAssetResetVersion || 0) > Number(stateBase?.petAssetResetVersion || 0)) {
+        merged.adopted = [0];
+        merged.pet = 0;
+        merged.petAssetResetVersion = Number(state.petAssetResetVersion);
+      }
       const response = await fetch(`${endpoint}?id=eq.${encodeURIComponent(familyId)}`, {
         method: 'PATCH', headers: { ...headers, Prefer: 'return=representation' }, keepalive: true,
         body: JSON.stringify({ state: merged, updated_at: new Date().toISOString() })
