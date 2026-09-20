@@ -26,6 +26,14 @@
     state.petBalanceResetVersion = petBalanceResetVersion;
     return true;
   };
+  const petAssetResetVersion = 1;
+  const applyPetAssetReset = state => {
+    if (!state || typeof state !== 'object' || Number(state.petAssetResetVersion || 0) >= petAssetResetVersion) return false;
+    state.adopted = [0];
+    state.pet = 0;
+    state.petAssetResetVersion = petAssetResetVersion;
+    return true;
+  };
 
   // 正式云端版不展示开发测试控件；离线复刻版仍保留这些测试能力。
   document.querySelector('.reset-test-bar')?.remove();
@@ -234,6 +242,14 @@
         if (pendingAfterRequest?.state && !pendingAfterRequest.legacy) {
           setStatus('☁ 正在保存刚才的操作…');
           queueSave(pendingAfterRequest.state, 0, pendingAfterRequest.base);
+          return;
+        }
+        const beforePetAssetReset = copy(remote.state || {});
+        if (applyPetAssetReset(remote.state)) {
+          replaceState(remote.state);
+          initialLoadComplete = true;
+          queueSave(remote.state, 0, beforePetAssetReset);
+          setStatus('☁ 已仅保留云纹焰兽', 'ok');
           return;
         }
         const beforePetBalanceReset = copy(remote.state || {});
