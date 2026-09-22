@@ -553,65 +553,100 @@
   const dadRepairPanel = document.createElement('section');
   dadRepairPanel.className = 'dad-repair-panel';
   dadRepairPanel.hidden = true;
-  dadRepairPanel.innerHTML = '<div><b>爸爸补打卡与修复</b><span>点击未打卡日期可立即预览；只有点击“立即保存”后才会写入家庭数据。已有打卡和原分数不会被修改。</span></div><div id="eDadRepairDays" class="dad-repair-days"></div><div class="dad-repair-actions"><button type="button" onclick="openPointControl()">手动补回 / 扣除分数</button><button type="button" onclick="dadRepairWeek(-1, this)">‹ 上一测试周</button><button type="button" onclick="dadRepairWeek(1, this)">下一测试周 ›</button><button type="button" class="dad-save-button" onclick="saveDadRepairChanges(this)">立即保存</button></div>';
+  dadRepairPanel.innerHTML = '<div><b>爸爸补打卡与修复</b><span>点击日期可预览补打卡或撤回；只有点击“立即保存”后才会写入家庭数据。未来日期不能提前打卡。</span><span id="eDadRepairWeekLabel"></span></div><div id="eDadRepairDays" class="dad-repair-days"></div><div class="dad-repair-actions"><button type="button" onclick="openPointControl()">手动补回 / 扣除分数</button><button type="button" onclick="dadRepairWeek(-1, this)">‹ 上一测试周</button><button type="button" onclick="dadRepairWeek(1, this)">下一测试周 ›</button><button type="button" class="dad-save-button" onclick="saveDadRepairChanges(this)">立即保存</button></div>';
   officialRolePanel.after(dadRepairPanel);
   const dadRepairStyle = document.createElement('style');
-  dadRepairStyle.textContent = '.dad-repair-panel{display:grid;gap:10px;margin:12px 10px 0;padding:13px;border:2px dashed #78bee7;border-radius:16px;background:#f5fcff}.dad-repair-panel[hidden]{display:none}.dad-repair-panel b,.dad-repair-panel span{display:block}.dad-repair-panel b{color:#0a67b0;font-size:16px}.dad-repair-panel span{margin-top:4px;color:#4d81a7;font-size:12px;line-height:1.45}.dad-repair-days{display:grid;grid-template-columns:repeat(4,1fr);gap:6px}.dad-repair-days button,.dad-repair-actions button{min-height:37px;padding:6px 4px;border:1px solid #96d7ee;border-radius:10px;background:#eaf8ff;color:#0b69b1;font:inherit;font-size:11px;font-weight:900;transition:.12s}.dad-repair-days button small{display:block;margin-top:2px;font-size:9px;font-weight:800;opacity:.78}.dad-repair-days button.done{background:#22a66b;color:#fff;border-color:#168858;box-shadow:0 2px 0 #0d7147}.dad-repair-days button.pending{background:#ffb23e;color:#673d00;border-color:#e89016;box-shadow:0 2px 0 #c97b0e}.dad-repair-days button.future{opacity:.46}.dad-repair-days button:active,.dad-repair-actions button:active,.dad-repair-actions button.is-active{transform:translateY(1px);filter:brightness(.9);box-shadow:inset 0 2px 5px #07589d55}.dad-repair-actions{display:grid;grid-template-columns:repeat(2,1fr);gap:6px}.dad-repair-actions .dad-save-button{background:#eaf8ff;color:#0b69b1;border-color:#96d7ee}.dad-repair-actions .dad-save-button:active,.dad-repair-actions .dad-save-button.is-active{background:#1778c8;color:#fff;border-color:#1778c8;box-shadow:inset 0 2px 5px #07589d55}';
+  dadRepairStyle.textContent = '.dad-repair-panel{display:grid;gap:10px;margin:12px 10px 0;padding:13px;border:2px dashed #78bee7;border-radius:16px;background:#f5fcff}.dad-repair-panel[hidden]{display:none}.dad-repair-panel b,.dad-repair-panel span{display:block}.dad-repair-panel b{color:#0a67b0;font-size:16px}.dad-repair-panel span{margin-top:4px;color:#4d81a7;font-size:12px;line-height:1.45}.dad-repair-days{display:grid;grid-template-columns:repeat(4,1fr);gap:6px}.dad-repair-days button,.dad-repair-actions button{min-height:37px;padding:6px 4px;border:1px solid #96d7ee;border-radius:10px;background:#eaf8ff;color:#0b69b1;font:inherit;font-size:11px;font-weight:900;transition:.12s}.dad-repair-days button small{display:block;margin-top:2px;font-size:9px;font-weight:800;opacity:.78}.dad-repair-days button.done{background:#22a66b;color:#fff;border-color:#168858;box-shadow:0 2px 0 #0d7147}.dad-repair-days button.pending{background:#ffb23e;color:#673d00;border-color:#e89016;box-shadow:0 2px 0 #c97b0e}.dad-repair-days button.pending-remove{background:#ffe9ed;color:#b62e4a;border-color:#ee91a4;box-shadow:0 2px 0 #d66f83}.dad-repair-days button.future{background:#edf5f8!important;color:#8da8b7!important;border-color:#c7dce5!important;box-shadow:none!important;opacity:.58;cursor:not-allowed}.dad-repair-days button:active,.dad-repair-actions button:active,.dad-repair-actions button.is-active{transform:translateY(1px);filter:brightness(.9);box-shadow:inset 0 2px 5px #07589d55}.dad-repair-actions{display:grid;grid-template-columns:repeat(2,1fr);gap:6px}.dad-repair-actions .dad-save-button{background:#eaf8ff;color:#0b69b1;border-color:#96d7ee}.dad-repair-actions .dad-save-button:active,.dad-repair-actions .dad-save-button.is-active{background:#1778c8;color:#fff;border-color:#1778c8;box-shadow:inset 0 2px 5px #07589d55}';
   document.head.append(dadRepairStyle);
   let dadRepairDraft = null;
   let dadRepairActiveDay = -1;
-  E.dadRepairHasPending = () => !!dadRepairDraft && dadRepairDraft.weekIndex === s.weekIndex && dadRepairDraft.done.some((value, index) => value !== !!s.done[index]);
+  const currentRealWeekIndex = () => Math.max(0, Math.floor((localMidnight().getTime() - checkinStart.getTime()) / dayMs / 7));
+  let dadRepairWeekIndex = currentRealWeekIndex();
+  E.dadRepairDate = (weekIndex, dayIndex) => new Date(checkinStart.getTime() + (weekIndex * 7 + dayIndex) * dayMs);
+  E.dadRepairStoredDone = weekIndex => {
+    const week = weekIndex === s.weekIndex ? { done: s.done } : s.weekData[weekIndex];
+    return Array.from({ length: 7 }, (_, index) => E.isCheckinDone(weekIndex, index, week?.done?.[index]));
+  };
+  E.dadRepairHasPending = () => {
+    if (!dadRepairDraft || dadRepairDraft.weekIndex !== dadRepairWeekIndex) return false;
+    const saved = E.dadRepairStoredDone(dadRepairWeekIndex);
+    return dadRepairDraft.done.some((value, index) => value !== saved[index]);
+  };
   E.renderDadRepairPanel = () => {
     dadRepairPanel.hidden = roleName !== '爸爸';
     if (dadRepairPanel.hidden) return;
-    const preview = dadRepairDraft?.weekIndex === s.weekIndex ? dadRepairDraft.done : s.done;
+    dadRepairWeekIndex = Math.max(0, Math.min(currentRealWeekIndex(), dadRepairWeekIndex));
+    const savedDays = E.dadRepairStoredDone(dadRepairWeekIndex);
+    const preview = dadRepairDraft?.weekIndex === dadRepairWeekIndex ? dadRepairDraft.done : savedDays;
+    const weekStart = E.dadRepairDate(dadRepairWeekIndex, 0), weekEnd = E.dadRepairDate(dadRepairWeekIndex, 6);
+    const label = $('#eDadRepairWeekLabel');
+    if (label) label.textContent = `当前查看：第 ${dadRepairWeekIndex + 1} 周 · ${E.shortDate(weekStart)}—${E.shortDate(weekEnd)}`;
     $('#eDadRepairDays').innerHTML = names.map((name, index) => {
-      const saved = !!s.done[index], staged = !!preview[index] && !saved, future = E.weekDate(index) > localMidnight();
-      const classes = [saved ? 'done' : '', staged ? 'pending' : '', future ? 'future' : '', dadRepairActiveDay === index ? 'is-active' : ''].filter(Boolean).join(' ');
-      const prefix = saved ? '✓' : staged ? '待保存' : '补';
-      const score = saved ? E.checkinScore(s.weekIndex, index) : pts[index];
-      return `<button type="button" class="${classes}" onclick="toggleDadRepairDay(${index}, this)">${prefix} ${name} +${score}<small>${E.shortDate(E.weekDate(index))}</small></button>`;
+      const date = E.dadRepairDate(dadRepairWeekIndex, index), future = date > localMidnight();
+      const saved = !future && savedDays[index], shown = !future && !!preview[index];
+      const stagedAdd = shown && !saved, stagedRemove = !shown && saved;
+      const classes = [shown && !stagedAdd ? 'done' : '', stagedAdd ? 'pending' : '', stagedRemove ? 'pending-remove' : '', future ? 'future' : '', dadRepairActiveDay === index ? 'is-active' : ''].filter(Boolean).join(' ');
+      const prefix = future ? '未到' : stagedRemove ? '待撤回' : saved ? '✓' : stagedAdd ? '待保存' : '补';
+      const score = saved ? E.checkinScore(dadRepairWeekIndex, index) : pts[index];
+      return `<button type="button" class="${classes}" onclick="toggleDadRepairDay(${index}, this)" aria-disabled="${future ? 'true' : 'false'}">${prefix} ${name} +${score}<small>${E.shortDate(date)}</small></button>`;
     }).join('');
-    $('.dad-save-button').classList.toggle('has-pending', E.dadRepairHasPending());
   };
   window.toggleDadRepairDay = (index, button) => {
     if (roleName !== '爸爸') return toast('仅爸爸页面可使用补打卡功能');
+    const date = E.dadRepairDate(dadRepairWeekIndex, index);
     dadRepairActiveDay = index;
-    if (s.done[index]) { E.renderDadRepairPanel(); return toast('这一天已经打卡，原分数保持不变'); }
-    if (E.weekDate(index) > localMidnight()) { E.renderDadRepairPanel(); return toast('未来日期暂不能补打卡'); }
-    if (!dadRepairDraft || dadRepairDraft.weekIndex !== s.weekIndex) dadRepairDraft = { weekIndex: s.weekIndex, done: [...s.done] };
+    if (date > localMidnight()) { E.renderDadRepairPanel(); return toast('日期还没到，不能提前打卡'); }
+    const savedDays = E.dadRepairStoredDone(dadRepairWeekIndex);
+    if (!dadRepairDraft || dadRepairDraft.weekIndex !== dadRepairWeekIndex) dadRepairDraft = { weekIndex: dadRepairWeekIndex, done: [...savedDays] };
     dadRepairDraft.done[index] = !dadRepairDraft.done[index];
     if (!E.dadRepairHasPending()) dadRepairDraft = null;
     E.renderDadRepairPanel();
-    toast(dadRepairDraft ? '已在页面预览，点击“立即保存”后才会生效' : '已取消待保存修改');
+    toast(dadRepairDraft ? (savedDays[index] ? '已暂存为撤回，点击“立即保存”后生效' : '已暂存补打卡，点击“立即保存”后生效') : '已取消待保存修改');
   };
   window.saveDadRepairChanges = button => {
     button?.classList.add('is-active');
     setTimeout(() => button?.classList.remove('is-active'), 420);
     if (roleName !== '爸爸') return toast('仅爸爸页面可保存补打卡');
-    if (!E.dadRepairHasPending()) { button?.classList.add('is-active'); setTimeout(() => button?.classList.remove('is-active'), 350); return toast('没有待保存的补打卡'); }
+    if (!E.dadRepairHasPending()) return toast('没有待保存的打卡修改');
+    const weekIndex = dadRepairDraft.weekIndex, savedDays = E.dadRepairStoredDone(weekIndex);
+    const target = weekIndex === s.weekIndex ? s : (s.weekData[weekIndex] || { done: [false, false, false, false, false, false, false], extra: 0, adjustments: [] });
+    target.done = Array.from({ length: 7 }, (_, index) => !!target.done?.[index]);
     const stamp = new Date().toLocaleString('zh-CN', { hour12: false });
+    let added = 0, removed = 0;
     dadRepairDraft.done.forEach((done, index) => {
-      if (!done || s.done[index]) return;
-      s.done[index] = true;
-      const key = E.checkinKey(s.weekIndex, index);
-      const score = pts[index];
-      s.checkinScores[key] = score;
-      s.checkinRepairs[key] = { actor: '爸爸', time: stamp, reason: '爸爸补打卡', state: 'done' };
-      E.awardCheckinMaterial(s.weekIndex, index, score);
+      if (done === savedDays[index]) return;
+      const key = E.checkinKey(weekIndex, index), score = E.checkinScore(weekIndex, index);
+      target.done[index] = done;
+      if (done) {
+        s.checkinScores[key] = Number.isFinite(Number(s.checkinScores[key])) ? Number(s.checkinScores[key]) : pts[index];
+        s.checkinRepairs[key] = { actor: '爸爸', time: stamp, reason: '爸爸补打卡', state: 'done' };
+        const priorAward = Number(s.checkinMaterialAwards[key]);
+        const materialAward = Number.isFinite(priorAward) && priorAward > 0 ? priorAward : E.checkinScore(weekIndex, index) * 10;
+        E.changeMaterial(materialAward);
+        s.checkinMaterialAwards[key] = materialAward;
+        added += 1;
+      } else {
+        s.checkinRepairs[key] = { actor: '爸爸', time: stamp, reason: '爸爸撤回打卡', state: 'undone' };
+        const priorAward = Number(s.checkinMaterialAwards[key]);
+        E.changeMaterial(-(Number.isFinite(priorAward) && priorAward > 0 ? priorAward : score * 10));
+        removed += 1;
+      }
     });
+    if (weekIndex !== s.weekIndex) s.weekData[weekIndex] = target;
     dadRepairDraft = null;
     dadRepairActiveDay = -1;
     E.render();
     if (typeof window.littleStarSyncNow === 'function') window.littleStarSyncNow();
-    toast('补打卡已保存并同步；原积分与扣分记录未修改');
+    toast(`打卡修改已保存并同步（补打 ${added} 天，撤回 ${removed} 天）`);
   };
   window.dadRepairWeek = (delta, button) => {
-    if (roleName !== '爸爸') return toast('仅爸爸页面可浏览测试周');
-    if (E.dadRepairHasPending()) return toast('请先点击“立即保存”，或再次点击待保存日期取消');
+    if (roleName !== '爸爸') return toast('仅爸爸页面可浏览周记录');
+    if (E.dadRepairHasPending()) return toast('请先点击“立即保存”，或再次点击日期取消待保存修改');
+    const next = Math.max(0, Math.min(currentRealWeekIndex(), dadRepairWeekIndex + delta));
+    if (next === dadRepairWeekIndex) return toast(delta < 0 ? '已经是第一周' : '未来周还不能查看');
     button?.classList.add('is-active');
     setTimeout(() => button?.classList.remove('is-active'), 350);
-    E.weekLoad(Math.max(0, s.weekIndex + delta));
+    dadRepairWeekIndex = next;
     dadRepairActiveDay = -1;
     E.renderDadRepairPanel();
   };
