@@ -76,6 +76,12 @@
   s.redeemed = Math.max(0, Number(s.redeemed || 0));
   s.cashAdjust = Number(s.cashAdjust || 0);
   s.feedUsed = Math.max(0, Number(s.feedUsed || 0));
+  const defaultPetStageThresholds = [1000, 2500, 5000];
+  const normalizePetStageThresholds = value => {
+    const levels = Array.isArray(value) ? value.map(Number) : [];
+    return levels.length === 3 && levels.every((n, i) => Number.isInteger(n) && n > 0 && (i === 0 || n > levels[i - 1])) ? levels : [...defaultPetStageThresholds];
+  };
+  s.petStageThresholds = normalizePetStageThresholds(s.petStageThresholds);
   s.calendarOffset = Number.isInteger(s.calendarOffset) ? Math.max(-12, Math.min(12, s.calendarOffset)) : 0;
   const defaultTaskTemplates = {
     weekday: [
@@ -115,6 +121,7 @@
     s.redeemed = Math.max(0, Number(s.redeemed || 0));
     s.cashAdjust = Number.isFinite(Number(s.cashAdjust)) ? Number(s.cashAdjust) : 0;
     s.feedUsed = Math.max(0, Number(s.feedUsed || 0));
+    s.petStageThresholds = normalizePetStageThresholds(s.petStageThresholds);
     s.calendarOffset = Number.isInteger(s.calendarOffset) ? Math.max(-12, Math.min(12, s.calendarOffset)) : 0;
     s.taskTemplates = s.taskTemplates && typeof s.taskTemplates === 'object' ? s.taskTemplates : {};
     s.taskTemplates.weekday = normalizeTaskList(s.taskTemplates.weekday, defaultTaskTemplates.weekday);
@@ -321,7 +328,7 @@
   // 打招呼是宠物互动入口，固定放在宠物展示区下方、状态卡之前。
   const greetEntry = $('#pet .pet-card .softbtn.full');
   if (greetEntry) { greetEntry.id = 'ePetGreet'; greetEntry.classList.add('pet-greet-button'); $('.pet-world').after(greetEntry); }
-  E.stage = () => s.feedUsed >= 5000 ? 3 : s.feedUsed >= 2500 ? 2 : s.feedUsed >= 1000 ? 1 : 0;
+  E.stage = () => s.feedUsed >= s.petStageThresholds[2] ? 3 : s.feedUsed >= s.petStageThresholds[1] ? 2 : s.feedUsed >= s.petStageThresholds[0] ? 1 : 0;
   // 四个阶段各有轻量待机/打招呼视频；只加载当前所在页面、当前等级的一段。
   E.stageVideo = (level, action = 'idle') => `assets/fire-lv${level}-${action}-lite-v2.mp4`;
   E.stagePoster = level => ['assets/fire-pet-egg.jpg', 'assets/fire-pet-stage1.jpg', 'assets/fire-pet-catalog.jpg', 'assets/fire-pet-final.jpg'][level] || 'assets/fire-pet-egg.jpg';
@@ -336,7 +343,7 @@
   E.syncStageVideos = level => { const active = E.activeVideoSelector(); ['#homePet','#worldPet'].forEach(selector => { if (selector === active) { const video = E.ensureStageVideo(selector); video.poster = E.stagePoster(level); E.playVideo(video, E.stageVideo(level), true); } else E.releaseStageVideo(selector); }); };
   E.greet = () => { const level = E.stage(), selector = E.activeVideoSelector(); if (!selector) return; const video = E.ensureStageVideo(selector); video.poster = E.stagePoster(level); E.playVideo(video, E.stageVideo(level, 'greet'), false); video.onended = () => E.playVideo(video, E.stageVideo(E.stage()), true); toast(`云纹焰兽正在表演 LV${level} 的打招呼动画！`); };
   E.levelFlash = () => { $('.pet-home, .pet-world') && $$('.pet-home, .pet-world').forEach(host => { const flash = document.createElement('i'); flash.className = 'level-flash'; host.append(flash); setTimeout(() => flash.remove(), 760); }); };
-  E.feedOnce = () => { if (s.feedUsed >= 5000) return toast('已经是最终阶段，继续陪伴它吧！'); if (E.material() < 100) return toast('宠物材料不足，完成打卡可获得更多材料'); const before = E.stage(); E.changeMaterial(-100); s.feedUsed += 100; E.render(); if (E.stage() > before) { E.levelFlash(); toast(`升级成功！LV${E.stage()} 已点亮`); } else toast('喂养成功，消耗 100 宠物材料'); };
+  E.feedOnce = () => { const finalNeed = s.petStageThresholds[2]; if (s.feedUsed >= finalNeed) return toast('已经是最终阶段，继续陪伴它吧！'); if (E.material() < 100) return toast('宠物材料不足，完成打卡可获得更多材料'); const before = E.stage(); E.changeMaterial(-100); s.feedUsed = Math.min(finalNeed, s.feedUsed + 100); E.render(); if (E.stage() > before) { E.levelFlash(); toast(`升级成功！LV${E.stage()} 已点亮`); } else toast('喂养成功，消耗 100 宠物材料'); };
   let feedHold = null, feedInterval = null, feedLong = false;
   const stopFeedHold = () => { clearTimeout(feedHold); clearInterval(feedInterval); feedHold = null; feedInterval = null; };
   feed.addEventListener('pointerdown', event => { event.preventDefault(); feedLong = false; feedHold = setTimeout(() => { feedLong = true; E.feedOnce(); feedInterval = setInterval(E.feedOnce, 150); }, 380); });
@@ -440,87 +447,134 @@
   const officialRolePanel = document.createElement('section');
   officialRolePanel.className = 'official-role-panel';
   officialRolePanel.hidden = true;
-  officialRolePanel.innerHTML = '<div><b id="officialRoleTitle">家长管理入口</b><span>可管理本周加减分、累计日常积分和每日小约定</span></div><div class="official-role-actions"><button type="button" onclick="openPointControl()">调整本周积分</button><button type="button" onclick="openCashBalanceControl()">累计日常积分</button><button type="button" onclick="openTaskManager()">修改每日规则</button></div>';
+  officialRolePanel.innerHTML = '<div><b id="officialRoleTitle">家长管理入口</b><span>可管理积分、每日规则和宠物培养数据</span></div><div class="official-role-actions"><button type="button" onclick="openPointControl()">调整本周积分</button><button type="button" onclick="openCashBalanceControl()">累计日常积分</button><button type="button" onclick="openTaskManager()">修改每日规则</button><button type="button" data-pet-control="material" onclick="openPetParentControl(\'material\', this)">调整宠物材料</button><button type="button" data-pet-control="level" onclick="openPetParentControl(\'level\', this)">调整当前宠物等级</button><button type="button" data-pet-control="coupons" onclick="openPetParentControl(\'coupons\', this)">调整宠物券</button><button type="button" data-pet-control="rules" onclick="openPetParentControl(\'rules\', this)">调整宠物规则</button></div>';
   $('.top').after(officialRolePanel);
   const officialRoleStyle = document.createElement('style');
-  officialRoleStyle.textContent = '.official-role-panel{display:grid;gap:10px;margin:12px 10px 0;padding:13px;border:2px solid #8edcf3;border-radius:16px;background:linear-gradient(135deg,#e7f8ff,#f9fdff);box-shadow:0 4px 0 #aeddec}.official-role-panel[hidden]{display:none}.official-role-panel b,.official-role-panel span{display:block}.official-role-panel b{color:#0a67b0;font-size:16px}.official-role-panel span{margin-top:4px;color:#4d81a7;font-size:12px;line-height:1.45}.official-role-actions{display:grid;grid-template-columns:repeat(3,1fr);gap:6px}.official-role-actions button{min-height:40px;padding:6px 4px;border:1px solid #96d7ee;border-radius:10px;background:#f5fcff;color:#0b69b1;font:inherit;font-size:11px;font-weight:900}';
+  officialRoleStyle.textContent = '.official-role-panel{display:grid;gap:10px;margin:12px 10px 0;padding:13px;border:2px solid #8edcf3;border-radius:16px;background:linear-gradient(135deg,#e7f8ff,#f9fdff);box-shadow:0 4px 0 #aeddec}.official-role-panel[hidden]{display:none}.official-role-panel b,.official-role-panel span{display:block}.official-role-panel b{color:#0a67b0;font-size:16px}.official-role-panel span{margin-top:4px;color:#4d81a7;font-size:12px;line-height:1.45}.official-role-actions{display:grid;grid-template-columns:repeat(2,1fr);gap:6px}.official-role-actions button{min-height:40px;padding:6px 4px;border:1px solid #96d7ee;border-radius:10px;background:#f5fcff;color:#0b69b1;font:inherit;font-size:11px;font-weight:900;transition:.12s}.official-role-actions button:active,.official-role-actions button.is-active{transform:translateY(1px);background:#1778c8;color:#fff;border-color:#1778c8;box-shadow:inset 0 2px 5px #07589d55}';
   document.head.append(officialRoleStyle);
-  // 爸爸端保留一组明确的“测试与修复”工具。它和孩子页面完全分离，
-  // 方便在异常后补回某一天的打卡或手动补回分数。
+
+  const petParentModal = document.createElement('div');
+  petParentModal.className = 'parent-modal';
+  petParentModal.hidden = true;
+  petParentModal.innerHTML = '<div class="modal-card"><h2 id="ePetParentTitle">调整宠物数据</h2><p id="ePetParentHint"></p><div id="ePetParentFields" class="pet-parent-fields"></div><div class="modal-actions"><button type="button" onclick="closePetParentControl()">取消</button><button type="button" class="primary" onclick="applyPetParentControl()">确认保存</button></div></div>';
+  document.body.append(petParentModal);
+  const petParentStyle = document.createElement('style');
+  petParentStyle.textContent = '.pet-parent-fields{display:grid;gap:9px;margin:12px 0}.pet-parent-fields label{display:grid;gap:5px;color:#397da9;font-size:12px;font-weight:900}.pet-parent-fields input,.pet-parent-fields select{box-sizing:border-box;width:100%;padding:10px;border:2px solid #9ad8ef;border-radius:10px;background:#fff;color:#145f99;font:inherit}.pet-rule-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:6px}.pet-rule-grid label{min-width:0}.pet-rule-grid input{min-width:0;padding:8px 4px;text-align:center}';
+  document.head.append(petParentStyle);
+  let petParentMode = '';
+  const clearPetControlActive = () => $$('.official-role-actions [data-pet-control]').forEach(button => button.classList.remove('is-active'));
+  window.openPetParentControl = (mode, button) => {
+    if (roleName === '孩子') return toast('请切换到爸爸或妈妈页面后管理宠物');
+    petParentMode = mode;
+    clearPetControlActive();
+    if (button) button.classList.add('is-active');
+    const titles = { material: '调整宠物材料', level: '调整当前宠物等级', coupons: '调整宠物券', rules: '调整宠物升级规则' };
+    $('#ePetParentTitle').textContent = titles[mode] || '调整宠物数据';
+    if (mode === 'material') {
+      $('#ePetParentHint').textContent = '只修改宠物材料余额，不会改动积分或扣分记录。';
+      $('#ePetParentFields').innerHTML = `<label>宠物材料余额<input id="ePetMaterialInput" type="number" min="0" step="1" value="${E.material()}"></label>`;
+    } else if (mode === 'level') {
+      $('#ePetParentHint').textContent = '按当前规则设置宠物阶段，不会改动积分、材料或扣分记录。';
+      $('#ePetParentFields').innerHTML = `<label>当前宠物等级<select id="ePetLevelInput"><option value="0">蛋阶段</option><option value="1">LV1 · 第一阶段</option><option value="2">LV2 · 成长阶段</option><option value="3">LV3 · 最终阶段</option></select></label>`;
+      $('#ePetLevelInput').value = String(E.stage());
+    } else if (mode === 'coupons') {
+      $('#ePetParentHint').textContent = '设置宠物券张数，不会改动积分或扣分记录。';
+      $('#ePetParentFields').innerHTML = `<label>宠物券数量<input id="ePetCouponsInput" type="number" min="0" step="1" value="${s.petCoupons}"></label>`;
+    } else {
+      const [a, b, d] = s.petStageThresholds;
+      $('#ePetParentHint').textContent = '三个数值必须依次增大；保存后培养进度、进度条和升级提示会立即按新规则计算。';
+      $('#ePetParentFields').innerHTML = `<div class="pet-rule-grid"><label>LV1 需要<input id="ePetRule1" type="number" min="1" step="1" value="${a}"></label><label>LV2 需要<input id="ePetRule2" type="number" min="2" step="1" value="${b}"></label><label>LV3 需要<input id="ePetRule3" type="number" min="3" step="1" value="${d}"></label></div>`;
+    }
+    petParentModal.hidden = false;
+  };
+  window.closePetParentControl = () => { petParentModal.hidden = true; petParentMode = ''; clearPetControlActive(); };
+  window.applyPetParentControl = () => {
+    if (roleName === '孩子') return toast('请切换到爸爸或妈妈页面后管理宠物');
+    if (petParentMode === 'material') {
+      const value = Number($('#ePetMaterialInput').value);
+      if (!Number.isInteger(value) || value < 0) return toast('请输入不小于 0 的整数');
+      s.materialBalance = value;
+    } else if (petParentMode === 'level') {
+      const level = Number($('#ePetLevelInput').value);
+      if (![0, 1, 2, 3].includes(level)) return toast('请选择有效等级');
+      s.feedUsed = level === 0 ? 0 : s.petStageThresholds[level - 1];
+    } else if (petParentMode === 'coupons') {
+      const value = Number($('#ePetCouponsInput').value);
+      if (!Number.isInteger(value) || value < 0) return toast('请输入不小于 0 的整数');
+      s.petCoupons = value;
+    } else if (petParentMode === 'rules') {
+      const values = [Number($('#ePetRule1').value), Number($('#ePetRule2').value), Number($('#ePetRule3').value)];
+      if (!(values.every(Number.isInteger) && values[0] > 0 && values[0] < values[1] && values[1] < values[2])) return toast('请按 LV1 < LV2 < LV3 填写正整数');
+      s.petStageThresholds = values;
+    } else return;
+    const message = $('#ePetParentTitle').textContent + '已保存';
+    closePetParentControl();
+    E.render();
+    toast(message);
+  };
+
+  // 爸爸补打卡采用“先预览、后保存”：点击日期只改变本面板显示，不写入家庭数据。
   const dadRepairPanel = document.createElement('section');
   dadRepairPanel.className = 'dad-repair-panel';
   dadRepairPanel.hidden = true;
-  dadRepairPanel.innerHTML = '<div><b>爸爸补打卡与修复</b><span>可按真实日期补打卡、撤销打卡，并填写当天实际分数；所有积分会同步到家庭页面。</span></div><div id="eDadRepairDays" class="dad-repair-days"></div><div class="dad-repair-actions"><button type="button" onclick="openDadCheckinRepair()">选择日期补打卡</button><button type="button" onclick="openPointControl()">手动补回 / 扣除分数</button><button type="button" onclick="dadRepairWeek(-1)">‹ 上一测试周</button><button type="button" onclick="dadRepairWeek(1)">下一测试周 ›</button><button type="button" onclick="littleStarSyncNow()">立即同步</button></div>';
+  dadRepairPanel.innerHTML = '<div><b>爸爸补打卡与修复</b><span>点击未打卡日期可立即预览；只有点击“立即保存”后才会写入家庭数据。已有打卡和原分数不会被修改。</span></div><div id="eDadRepairDays" class="dad-repair-days"></div><div class="dad-repair-actions"><button type="button" onclick="openPointControl()">手动补回 / 扣除分数</button><button type="button" onclick="dadRepairWeek(-1, this)">‹ 上一测试周</button><button type="button" onclick="dadRepairWeek(1, this)">下一测试周 ›</button><button type="button" class="dad-save-button" onclick="saveDadRepairChanges(this)">立即保存</button></div>';
   officialRolePanel.after(dadRepairPanel);
   const dadRepairStyle = document.createElement('style');
-  dadRepairStyle.textContent = '.dad-repair-panel{display:grid;gap:10px;margin:12px 10px 0;padding:13px;border:2px dashed #78bee7;border-radius:16px;background:#f5fcff}.dad-repair-panel[hidden]{display:none}.dad-repair-panel b,.dad-repair-panel span{display:block}.dad-repair-panel b{color:#0a67b0;font-size:16px}.dad-repair-panel span{margin-top:4px;color:#4d81a7;font-size:12px;line-height:1.45}.dad-repair-days{display:grid;grid-template-columns:repeat(4,1fr);gap:6px}.dad-repair-days button,.dad-repair-actions button{min-height:37px;padding:6px 4px;border:1px solid #96d7ee;border-radius:10px;background:#eaf8ff;color:#0b69b1;font:inherit;font-size:11px;font-weight:900}.dad-repair-days button.done{background:#eff8ed;color:#5a9473;border-color:#a9d8b7}.dad-repair-actions{display:grid;grid-template-columns:repeat(2,1fr);gap:6px}.dad-repair-actions button:first-child{background:#1778c8;color:#fff;border-color:#1778c8}.dad-checkin-fields{display:grid;gap:10px;margin:12px 0}.dad-checkin-fields label{display:grid;gap:5px;color:#397da9;font-size:12px;font-weight:900}.dad-checkin-fields input,.dad-checkin-fields select{box-sizing:border-box;width:100%;padding:10px;border:2px solid #9ad8ef;border-radius:10px;background:#fff;color:#145f99;font:inherit}.dad-checkin-summary{padding:9px 10px;border-radius:10px;background:#edf9ff;color:#337ba9;font-size:12px;line-height:1.5}';
+  dadRepairStyle.textContent = '.dad-repair-panel{display:grid;gap:10px;margin:12px 10px 0;padding:13px;border:2px dashed #78bee7;border-radius:16px;background:#f5fcff}.dad-repair-panel[hidden]{display:none}.dad-repair-panel b,.dad-repair-panel span{display:block}.dad-repair-panel b{color:#0a67b0;font-size:16px}.dad-repair-panel span{margin-top:4px;color:#4d81a7;font-size:12px;line-height:1.45}.dad-repair-days{display:grid;grid-template-columns:repeat(4,1fr);gap:6px}.dad-repair-days button,.dad-repair-actions button{min-height:37px;padding:6px 4px;border:1px solid #96d7ee;border-radius:10px;background:#eaf8ff;color:#0b69b1;font:inherit;font-size:11px;font-weight:900;transition:.12s}.dad-repair-days button.done{background:#22a66b;color:#fff;border-color:#168858;box-shadow:0 2px 0 #0d7147}.dad-repair-days button.pending{background:#ffb23e;color:#673d00;border-color:#e89016;box-shadow:0 2px 0 #c97b0e}.dad-repair-days button.future{opacity:.46}.dad-repair-days button:active,.dad-repair-actions button:active,.dad-repair-actions button.is-active{transform:translateY(1px);filter:brightness(.9);box-shadow:inset 0 2px 5px #07589d55}.dad-repair-actions{display:grid;grid-template-columns:repeat(2,1fr);gap:6px}.dad-repair-actions .dad-save-button{background:#1778c8;color:#fff;border-color:#1778c8}.dad-repair-actions .dad-save-button.has-pending{background:#ff9e2f;color:#573000;border-color:#e88717;animation:e-save-pulse 1.1s ease-in-out infinite alternate}@keyframes e-save-pulse{to{box-shadow:0 0 0 3px #ffd49a}}';
   document.head.append(dadRepairStyle);
+  let dadRepairDraft = null;
+  let dadRepairActiveDay = -1;
+  E.dadRepairHasPending = () => !!dadRepairDraft && dadRepairDraft.weekIndex === s.weekIndex && dadRepairDraft.done.some((value, index) => value !== !!s.done[index]);
   E.renderDadRepairPanel = () => {
     dadRepairPanel.hidden = roleName !== '爸爸';
     if (dadRepairPanel.hidden) return;
-    $('#eDadRepairDays').innerHTML = names.map((name, index) => `<button type="button" class="${s.done[index] ? 'done' : ''}" onclick="openDadCheckinRepair(${index})">${s.done[index] ? '✓ ' : '补 '}${name} ${s.done[index] ? '+' + E.checkinScore(s.weekIndex, index) : '+' + pts[index]}</button>`).join('');
+    const preview = dadRepairDraft?.weekIndex === s.weekIndex ? dadRepairDraft.done : s.done;
+    $('#eDadRepairDays').innerHTML = names.map((name, index) => {
+      const saved = !!s.done[index], staged = !!preview[index] && !saved, future = E.weekDate(index) > localMidnight();
+      const classes = [saved ? 'done' : '', staged ? 'pending' : '', future ? 'future' : '', dadRepairActiveDay === index ? 'is-active' : ''].filter(Boolean).join(' ');
+      const prefix = saved ? '✓' : staged ? '待保存' : '补';
+      const score = saved ? E.checkinScore(s.weekIndex, index) : pts[index];
+      return `<button type="button" class="${classes}" onclick="toggleDadRepairDay(${index}, this)">${prefix} ${name} +${score}</button>`;
+    }).join('');
+    $('.dad-save-button').classList.toggle('has-pending', E.dadRepairHasPending());
   };
-  const dadCheckinModal = document.createElement('div');
-  dadCheckinModal.className = 'parent-modal';
-  dadCheckinModal.hidden = true;
-  dadCheckinModal.innerHTML = '<div class="modal-card"><h2>补打卡 / 修改当天分数</h2><p>选择真实日期后，可以补上当天打卡、调整具体分数，或撤销误记的打卡。保存后会同步更新本周小星星、累计积分、宠物材料和家庭记录。</p><div class="dad-checkin-fields"><label>打卡日期<input id="eDadCheckinDate" type="date"></label><label>当天状态<select id="eDadCheckinStatus"><option value="done">已完成（补打卡）</option><option value="undone">未完成 / 撤销打卡</option></select></label><label id="eDadCheckinScoreLabel">当天实际分数<input id="eDadCheckinScore" type="number" min="0" max="1000" step="1"></label><label>说明（可选）<input id="eDadCheckinReason" maxlength="30" placeholder="例如：周二补打卡"></label></div><div id="eDadCheckinSummary" class="dad-checkin-summary"></div><div class="modal-actions"><button type="button" onclick="closeDadCheckinRepair()">取消</button><button type="button" class="primary" onclick="saveDadCheckinRepair()">保存并同步</button></div></div>';
-  document.body.append(dadCheckinModal);
-  const dateText = date => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
-  E.repairDateInfo = value => {
-    const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value || '');
-    if (!match) return null;
-    const date = new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
-    if (Number.isNaN(date.getTime()) || dateText(date) !== value || date < checkinStart || date > localMidnight()) return null;
-    const elapsed = Math.floor((date.getTime() - checkinStart.getTime()) / dayMs);
-    return { date, weekIndex: Math.floor(elapsed / 7), dayIndex: elapsed % 7 };
-  };
-  E.refreshDadCheckinRepair = () => {
-    const info = E.repairDateInfo($('#eDadCheckinDate').value), enabled = $('#eDadCheckinStatus').value === 'done';
-    $('#eDadCheckinScore').disabled = !enabled; $('#eDadCheckinReason').disabled = !enabled; $('#eDadCheckinScoreLabel').style.opacity = enabled ? '1' : '.5';
-    if (!info) { $('#eDadCheckinSummary').textContent = '请选择从 2026 年 9 月 14 日至今天之间的真实日期。'; return; }
-    const week = info.weekIndex === s.weekIndex ? { done: s.done } : s.weekData[info.weekIndex];
-    const done = !!week?.done?.[info.dayIndex], current = done ? E.checkinScore(info.weekIndex, info.dayIndex) : pts[info.dayIndex];
-    if (document.activeElement !== $('#eDadCheckinScore')) $('#eDadCheckinScore').value = current;
-    $('#eDadCheckinSummary').textContent = `${E.shortDate(info.date)} · ${names[info.dayIndex]} · 第 ${info.weekIndex + 1} 周${done ? `，当前已记录 ${current} 分` : `，默认建议 ${pts[info.dayIndex]} 分`}`;
-  };
-  window.openDadCheckinRepair = index => {
+  window.toggleDadRepairDay = (index, button) => {
     if (roleName !== '爸爸') return toast('仅爸爸页面可使用补打卡功能');
-    const dayIndex = Number.isInteger(index) ? index : s.day;
-    const date = E.weekDate(dayIndex), key = E.checkinKey(s.weekIndex, dayIndex), done = !!s.done[dayIndex];
-    $('#eDadCheckinDate').min = dateText(checkinStart); $('#eDadCheckinDate').max = dateText(localMidnight()); $('#eDadCheckinDate').value = dateText(date);
-    $('#eDadCheckinStatus').value = done ? 'done' : 'done'; $('#eDadCheckinScore').value = done ? E.checkinScore(s.weekIndex, dayIndex) : pts[dayIndex]; $('#eDadCheckinReason').value = s.checkinRepairs?.[key]?.reason || '';
-    dadCheckinModal.hidden = false; E.refreshDadCheckinRepair();
+    dadRepairActiveDay = index;
+    if (s.done[index]) { E.renderDadRepairPanel(); return toast('这一天已经打卡，原分数保持不变'); }
+    if (E.weekDate(index) > localMidnight()) { E.renderDadRepairPanel(); return toast('未来日期暂不能补打卡'); }
+    if (!dadRepairDraft || dadRepairDraft.weekIndex !== s.weekIndex) dadRepairDraft = { weekIndex: s.weekIndex, done: [...s.done] };
+    dadRepairDraft.done[index] = !dadRepairDraft.done[index];
+    if (!E.dadRepairHasPending()) dadRepairDraft = null;
+    E.renderDadRepairPanel();
+    toast(dadRepairDraft ? '已在页面预览，点击“立即保存”后才会生效' : '已取消待保存修改');
   };
-  window.closeDadCheckinRepair = () => { dadCheckinModal.hidden = true; };
-  window.saveDadCheckinRepair = () => {
-    if (roleName !== '爸爸') return toast('仅爸爸页面可使用补打卡功能');
-    const info = E.repairDateInfo($('#eDadCheckinDate').value); if (!info) return toast('请选择有效的真实日期');
-    const isDone = $('#eDadCheckinStatus').value === 'done', score = Number($('#eDadCheckinScore').value);
-    if (isDone && (!Number.isFinite(score) || score < 0 || score > 1000)) return toast('请填写 0 到 1000 之间的当天分数');
-    const week = info.weekIndex === s.weekIndex ? { done: s.done } : (s.weekData[info.weekIndex] || { done: [false, false, false, false, false, false, false], extra: 0, adjustments: [] });
-    const wasDone = !!week.done?.[info.dayIndex], previousScore = wasDone ? E.checkinScore(info.weekIndex, info.dayIndex) : 0;
-    week.done = Array.from({ length: 7 }, (_, i) => !!week.done[i]); week.done[info.dayIndex] = isDone;
-    if (info.weekIndex === s.weekIndex) s.done = week.done; else s.weekData[info.weekIndex] = { ...week, done: week.done };
-    const key = E.checkinKey(info.weekIndex, info.dayIndex);
-    const repairStamp = new Date().toLocaleString('zh-CN', { hour12: false });
-    E.changeMaterial(((isDone ? Math.round(score) : 0) - previousScore) * 10);
-    if (isDone) {
-      s.checkinScores[key] = Math.round(score);
-      s.checkinRepairs[key] = { actor: '爸爸', time: repairStamp, reason: $('#eDadCheckinReason').value.trim(), state: 'done' };
-    } else {
-      delete s.checkinScores[key];
-      // 撤回也必须留下“已撤回”的标记，而不是把记录直接删除。这样旧网页的完成快照
-      // 即使稍后才上传，也会被这次明确撤回覆盖；重新打开爸爸页面不会重复撤回。
-      s.checkinRepairs[key] = { actor: '爸爸', time: repairStamp, reason: $('#eDadCheckinReason').value.trim(), state: 'undone' };
-    }
-    dadCheckinModal.hidden = true; E.render();
-    toast(isDone ? `已补记 ${E.shortDate(info.date)} ${Math.round(score)} 分，并同步家庭积分` : `已撤销 ${E.shortDate(info.date)} 的打卡记录，并同步家庭积分`);
+  window.saveDadRepairChanges = button => {
+    if (roleName !== '爸爸') return toast('仅爸爸页面可保存补打卡');
+    if (!E.dadRepairHasPending()) { button?.classList.add('is-active'); setTimeout(() => button?.classList.remove('is-active'), 350); return toast('没有待保存的补打卡'); }
+    const stamp = new Date().toLocaleString('zh-CN', { hour12: false });
+    dadRepairDraft.done.forEach((done, index) => {
+      if (!done || s.done[index]) return;
+      s.done[index] = true;
+      const key = E.checkinKey(s.weekIndex, index);
+      const score = pts[index];
+      s.checkinScores[key] = score;
+      s.checkinRepairs[key] = { actor: '爸爸', time: stamp, reason: '爸爸补打卡', state: 'done' };
+      E.awardCheckinMaterial(s.weekIndex, index, score);
+    });
+    dadRepairDraft = null;
+    dadRepairActiveDay = -1;
+    E.render();
+    if (typeof window.littleStarSyncNow === 'function') window.littleStarSyncNow();
+    toast('补打卡已保存并同步；原积分与扣分记录未修改');
   };
-  $('#eDadCheckinDate').addEventListener('change', E.refreshDadCheckinRepair);
-  $('#eDadCheckinStatus').addEventListener('change', E.refreshDadCheckinRepair);
-  window.dadRepairWeek = delta => {
+  window.dadRepairWeek = (delta, button) => {
     if (roleName !== '爸爸') return toast('仅爸爸页面可浏览测试周');
+    if (E.dadRepairHasPending()) return toast('请先点击“立即保存”，或再次点击待保存日期取消');
+    button?.classList.add('is-active');
+    setTimeout(() => button?.classList.remove('is-active'), 350);
     E.weekLoad(Math.max(0, s.weekIndex + delta));
+    dadRepairActiveDay = -1;
     E.renderDadRepairPanel();
   };
   E.updateOfficialRolePanel = () => {
@@ -561,7 +615,8 @@
     $('#eDaily').textContent = daily; $('#eDailyHint').textContent = s.day >= 5 ? `含本周 ${E.weekPoints()} 分 · 周末可兑换` : `含本周 ${E.weekPoints()} 分 · 本周不可兑换`; $('#eMaterial').textContent = material; $('#eTopMaterial').textContent = material; $('#eCoupons').textContent = s.petCoupons;
     const eWeek = $('#eWeek'); if (eWeek) eWeek.innerHTML = `第 ${s.weekIndex + 1} 周<br>${E.shortDate(E.weekDate(0))} — ${E.shortDate(E.weekDate(6))}`;
     const currentStage = E.stage(), stageNames = ['蛋阶段','LV1 · 第一阶段','LV2 · 成长阶段','LV3 · 最终阶段'];
-    $('#eStage').textContent = stageNames[currentStage]; $('#eGrowth').style.width = Math.min(100, s.feedUsed / 5000 * 100) + '%'; $('#eGrowthCopy').textContent = `已喂养 ${s.feedUsed} / 5000 · 可用材料 ${material} · LV1 需 1000，LV2 需 2500，LV3 需 5000`; $('#eCheer').textContent = currentStage === 3 ? '太棒了！你们已经成长到最终阶段！' : `再喂养 ${[1000,2500,5000][currentStage] - s.feedUsed} 材料，即可点亮 LV${currentStage + 1}！`;
+    const [lv1Need, lv2Need, lv3Need] = s.petStageThresholds;
+    $('#eStage').textContent = stageNames[currentStage]; $('#eGrowth').style.width = Math.min(100, s.feedUsed / lv3Need * 100) + '%'; $('#eGrowthCopy').textContent = `已喂养 ${s.feedUsed} / ${lv3Need} · 可用材料 ${material} · LV1 需 ${lv1Need}，LV2 需 ${lv2Need}，LV3 需 ${lv3Need}`; $('#eCheer').textContent = currentStage === 3 ? '太棒了！你们已经成长到最终阶段！' : `再喂养 ${s.petStageThresholds[currentStage] - s.feedUsed} 材料，即可点亮 LV${currentStage + 1}！`;
     $$('#eLevels .level-icon').forEach(icon => { const level = Number(icon.dataset.level); const active = currentStage >= level; icon.classList.toggle('active', active); icon.classList.toggle('locked', !active); });
     E.showSpeech(false);
     $('#spirit').textContent = mood === '开心' ? '开心极了' : mood === '低落' ? '非常低落' : mood === '期待' ? '充满期待' : '安静休息'; $('#petSpirit').textContent = $('#spirit').textContent;
