@@ -316,12 +316,47 @@
   E.taskGroup = day => day >= 5 ? 'weekend' : 'weekday';
   E.tasksForDay = day => s.taskTemplates[E.taskGroup(day)].filter(task => !(day === 4 && task.skipFriday));
   E.taskKey = () => `${s.weekIndex}-${s.day}`;
-  E.taskChecksForToday = () => { const tasks = E.tasksForDay(s.day), key = E.taskKey(), prior = Array.isArray(s.taskChecks[key]) ? s.taskChecks[key] : []; const checks = tasks.map((_, index) => !!prior[index]); s.taskChecks[key] = checks; return checks; };
+  E.taskChecksForToday = () => {
+    const tasks = E.tasksForDay(s.day), key = E.taskKey(), prior = Array.isArray(s.taskChecks[key]) ? s.taskChecks[key] : [];
+    return tasks.map((_, index) => !!prior[index]);
+  };
+  let taskChecklistDraft = null;
+  let taskChecklistKey = '';
+  E.ensureTaskChecklistDraft = () => {
+    const key = E.taskKey(), tasks = E.tasksForDay(s.day);
+    if (taskChecklistKey !== key || !Array.isArray(taskChecklistDraft) || taskChecklistDraft.length !== tasks.length) {
+      taskChecklistKey = key;
+      taskChecklistDraft = E.taskChecksForToday();
+    }
+    return taskChecklistDraft;
+  };
+  E.saveTaskChecklistDraft = () => {
+    const checks = E.ensureTaskChecklistDraft();
+    s.taskChecks[taskChecklistKey] = [...checks];
+    E.persist();
+    return checks;
+  };
   const taskModal = document.createElement('div'); taskModal.className = 'task-modal'; taskModal.hidden = true;
-  taskModal.innerHTML = '<div class="modal-card"><h2>今天的小约定</h2><p id="eTaskIntro">逐项完成后领取今天的小星星。</p><div id="eTaskCheckList" class="task-check-list"></div><p id="eTaskProgress"></p><div class="modal-actions"><button onclick="closeTaskChecklist()">暂不领取</button><button id="eTaskClaim" class="primary claim-button" onclick="claimTaskStars()" disabled>全部完成，领取星星</button></div></div>';
+  taskModal.innerHTML = '<div class="modal-card"><h2>今天的小约定</h2><p id="eTaskIntro">逐项完成后领取今天的小星星。</p><button id="eTaskSelectAll" type="button" class="softbtn" style="width:100%;margin:2px 0 10px" onclick="toggleAllTaskItems()">一键全选</button><div id="eTaskCheckList" class="task-check-list"></div><p id="eTaskProgress"></p><div class="modal-actions"><button onclick="closeTaskChecklist()">暂不领取</button><button id="eTaskClaim" class="primary claim-button" onclick="claimTaskStars()" disabled>全部完成，领取星星</button></div></div>';
   document.body.append(taskModal);
-  E.renderTaskChecklist = () => { const tasks = E.tasksForDay(s.day), checks = E.taskChecksForToday(); $('#eTaskIntro').textContent = `${names[s.day]}的小约定：每一项完成后打上红勾。`; $('#eTaskCheckList').innerHTML = tasks.map((task, index) => `<div class="task-check-row ${checks[index] ? 'done' : ''}"><button class="task-box" type="button" aria-label="${checks[index] ? '取消完成' : '标记完成'}" onclick="toggleTaskItem(${index})">✓</button><span class="task-label">${E.escape(task.text)}</span></div>`).join('') || '<p class="sub">今天还没有小约定，家长可在管理入口添加。</p>'; const count = checks.filter(Boolean).length; $('#eTaskProgress').textContent = `已完成 ${count} / ${tasks.length} 项`; $('#eTaskClaim').disabled = !tasks.length || !checks.every(Boolean); };
-  window.openTaskChecklist = button => { if (s.done[s.day]) return toast('今天已经领取过星星啦！'); E.claimButton = button; E.renderTaskChecklist(); taskModal.hidden = false; };
+  E.renderTaskChecklist = () => {
+    const tasks = E.tasksForDay(s.day), checks = E.ensureTaskChecklistDraft();
+    $('#eTaskIntro').textContent = `${names[s.day]}的小约定：每一项完成后打上红勾。`;
+    $('#eTaskCheckList').innerHTML = tasks.map((task, index) => `<div class="task-check-row ${checks[index] ? 'done' : ''}"><button class="task-box" type="button" aria-label="${checks[index] ? '取消完成' : '标记完成'}" onclick="toggleTaskItem(${index})">✓</button><span class="task-label">${E.escape(task.text)}</span></div>`).join('') || '<p class="sub">今天还没有小约定，家长可在管理入口添加。</p>';
+    const count = checks.filter(Boolean).length, allDone = !!tasks.length && checks.every(Boolean);
+    $('#eTaskProgress').textContent = `已完成 ${count} / ${tasks.length} 项`;
+    $('#eTaskClaim').disabled = !allDone;
+    $('#eTaskSelectAll').disabled = !tasks.length;
+    $('#eTaskSelectAll').textContent = allDone ? '取消全选' : '一键全选';
+  };
+  window.openTaskChecklist = button => {
+    if (s.done[s.day]) return toast('今天已经领取过星星啦！');
+    E.claimButton = button;
+    taskChecklistKey = E.taskKey();
+    taskChecklistDraft = E.taskChecksForToday();
+    E.renderTaskChecklist();
+    taskModal.hidden = false;
+  };
   // 按钮自身只执行这一条函数。它在旧页面遗留的 `complete()` 之前中止事件，
   // 所以无论旧脚本怎样缓存，点击“我完成啦”都只能先显示红勾清单。
   window.littleStarShowChecklist = (button, event) => {
@@ -339,9 +374,43 @@
     event.stopImmediatePropagation();
     window.openTaskChecklist(button);
   }, true);
-  window.closeTaskChecklist = () => { taskModal.hidden = true; E.claimButton = null; };
-  window.toggleTaskItem = index => { const checks = E.taskChecksForToday(); checks[index] = !checks[index]; s.taskChecks[E.taskKey()] = checks; E.persist(); E.renderTaskChecklist(); };
-  window.claimTaskStars = () => { const checks = E.taskChecksForToday(); if (!checks.length || !checks.every(Boolean)) return toast('完成全部小约定后才能领取星星'); const button = E.claimButton, box = button ? button.getBoundingClientRect() : { left: innerWidth / 2, top: innerHeight * .7, width: 1, height: 1 }, before = E.weekPoints(), gain = pts[s.day]; if (!s.done[s.day]) E.awardCheckinMaterial(s.weekIndex, s.day, gain); s.done[s.day] = true; taskModal.hidden = true; E.claimButton = null; render(); $('#score').innerHTML = String(before).padStart(2,'0') + '<small> 颗</small>'; E.fly(box, gain * 10, () => E.roll(before, E.weekPoints())); toast(`太棒啦！完成全部约定，收到了 ${gain} 分和 ${gain * 10} 宠物材料。`); };
+  window.closeTaskChecklist = () => {
+    E.saveTaskChecklistDraft();
+    taskModal.hidden = true;
+    E.claimButton = null;
+    taskChecklistDraft = null;
+    taskChecklistKey = '';
+  };
+  window.toggleTaskItem = index => {
+    const checks = E.ensureTaskChecklistDraft();
+    checks[index] = !checks[index];
+    E.saveTaskChecklistDraft();
+    E.renderTaskChecklist();
+  };
+  window.toggleAllTaskItems = () => {
+    const checks = E.ensureTaskChecklistDraft(), allDone = checks.length > 0 && checks.every(Boolean);
+    taskChecklistDraft = checks.map(() => !allDone);
+    E.saveTaskChecklistDraft();
+    E.renderTaskChecklist();
+    toast(allDone ? '已取消全选' : '已一键全选');
+  };
+  window.claimTaskStars = () => {
+    const checks = E.saveTaskChecklistDraft();
+    if (!checks.length || !checks.every(Boolean)) return toast('完成全部小约定后才能领取星星');
+    const button = E.claimButton, box = button ? button.getBoundingClientRect() : { left: innerWidth / 2, top: innerHeight * .7, width: 1, height: 1 }, before = E.weekPoints(), gain = pts[s.day], key = E.checkinKey(s.weekIndex, s.day);
+    if (!s.done[s.day]) E.awardCheckinMaterial(s.weekIndex, s.day, gain);
+    s.done[s.day] = true;
+    s.checkinScores[key] = gain;
+    s.checkinRepairs[key] = { actor: '孩子', time: new Date().toLocaleString('zh-CN', { hour12: false }), reason: '完成全部小约定', state: 'done' };
+    taskModal.hidden = true;
+    E.claimButton = null;
+    taskChecklistDraft = null;
+    taskChecklistKey = '';
+    render();
+    $('#score').innerHTML = String(before).padStart(2,'0') + '<small> 颗</small>';
+    E.fly(box, gain * 10, () => E.roll(before, E.weekPoints()));
+    toast(`太棒啦！完成全部约定，收到了 ${gain} 分和 ${gain * 10} 宠物材料。`);
+  };
 
   let taskManagerGroup = 'weekday';
   const taskManager = document.createElement('div'); taskManager.className = 'parent-modal'; taskManager.hidden = true;
@@ -686,10 +755,11 @@
 
   E.baseUI = () => {
     const t = total(), currentDate = E.currentDate(), weekStart = E.weekDate(0), weekEnd = E.weekDate(6), date = `第 ${s.weekIndex + 1} 周 · ${E.shortDate(currentDate)} · ${names[s.day]}`;
+    const today = localMidnight(), visibleDone = names.map((_, index) => E.weekDate(index) <= today && E.isCheckinDone(s.weekIndex, index, s.done[index]));
     $('#datePill').textContent = date;
-    $('#week').innerHTML = names.map((n, i) => `<div class="day ${s.done[i] ? 'done' : 'pending'}"><div class="tile"><span>${n}</span><b>+${pts[i]}</b>${s.done[i] ? '★' : '·'}</div><span class="status">${s.done[i] ? '已完成' : '等你来'}</span></div>`).join('');
+    $('#week').innerHTML = names.map((n, i) => `<div class="day ${visibleDone[i] ? 'done' : 'pending'}"><div class="tile"><span>${n}</span><b>+${pts[i]}</b>${visibleDone[i] ? '★' : '·'}</div><span class="status">${visibleDone[i] ? '已完成' : E.weekDate(i) > today ? '未到日期' : '等你来'}</span></div>`).join('');
     $('#progress').style.width = Math.min(100, t / 400 * 100) + '%';
-    E.renderAdjustmentCard(); $('#profileScore').textContent = t; $('#monthDone').textContent = s.done.filter(Boolean).length + ' 天'; $('#monthExtra').textContent = Number(s.extra || 0) + ' 分'; $('#finished').textContent = s.done.filter(Boolean).length; $('#completeDays').textContent = s.done.filter(Boolean).length + ' 天'; $('#streak').textContent = s.done.filter(Boolean).length + ' 天';
+    E.renderAdjustmentCard(); $('#profileScore').textContent = t; $('#monthDone').textContent = visibleDone.filter(Boolean).length + ' 天'; $('#monthExtra').textContent = Number(s.extra || 0) + ' 分'; $('#finished').textContent = visibleDone.filter(Boolean).length; $('#completeDays').textContent = visibleDone.filter(Boolean).length + ' 天'; $('#streak').textContent = visibleDone.filter(Boolean).length + ' 天';
     $('#todayText').innerHTML = s.done[s.day] ? '<div class="question">今天已经记录好啦！</div><p>不需要重复打卡。每一个小小的坚持都很棒。</p>' : '<div class="question">今天的小约定，完成了吗？</div><p>完成后打个勾，让小星星飞进你的积分栏吧。</p>';
     const taskActions = $('#taskActions');
     if (roleName === '孩子') { taskActions.innerHTML = childTaskActionsMarkup; taskActions.hidden = !!s.done[s.day]; }
