@@ -170,6 +170,15 @@
     const score = Number(s.checkinScores?.[E.checkinKey(weekIndex, dayIndex)]);
     return Number.isFinite(score) && score >= 0 ? score : pts[dayIndex];
   };
+  // 兼容旧版本留下的真实打卡证据：分数、材料发放或补打卡记录都可恢复当天状态；
+  // 明确标记为 undone 的撤销记录优先，不能被旧分数重新点亮。
+  E.isCheckinDone = (weekIndex, dayIndex, storedDone) => {
+    const key = E.checkinKey(weekIndex, dayIndex), repair = s.checkinRepairs?.[key];
+    if (repair?.state === 'undone') return false;
+    if (repair && repair.state !== 'undone') return true;
+    if (storedDone !== undefined ? !!storedDone : !!(weekIndex === s.weekIndex ? s.done?.[dayIndex] : s.weekData?.[weekIndex]?.done?.[dayIndex])) return true;
+    return Object.prototype.hasOwnProperty.call(s.checkinScores || {}, key) || Object.prototype.hasOwnProperty.call(s.checkinMaterialAwards || {}, key);
+  };
   E.weekCheckinTotal = (weekIndex, done = []) => (done || []).reduce((sum, isDone, dayIndex) => sum + (isDone ? E.checkinScore(weekIndex, dayIndex) : 0), 0);
   E.weekPoints = () => Math.max(0, E.weekCheckinTotal(s.weekIndex, s.done) + Number(s.extra || 0));
   E.gross = () => E.weekPoints() + s.weekData.reduce((sum, week, index) => index === s.weekIndex ? sum : sum + Math.max(0, E.weekCheckinTotal(index, week.done) + Number(week.extra || 0)), 0);
@@ -235,7 +244,7 @@
     if (elapsed < 0) return { available: false, done: false, score: 0 };
     const weekIndex = Math.floor(elapsed / 7), dayIndex = elapsed % 7;
     const week = weekIndex === s.weekIndex ? { done: s.done } : s.weekData[weekIndex];
-    const done = !!week?.done?.[dayIndex];
+    const done = E.isCheckinDone(weekIndex, dayIndex, week?.done?.[dayIndex]);
     return { available: true, done, score: done ? E.checkinScore(weekIndex, dayIndex) : 0, weekIndex, dayIndex };
   };
   E.renderCalendar = () => {
@@ -464,7 +473,7 @@
   window.filterCatalog = q => E.catalog(q);
 
   E.weekSave = () => { const records = E.reconcileCurrentWeek(); s.weekData[s.weekIndex] = { done: [...s.done], extra: Number(s.extra || 0), adjustments: [...records] }; };
-  E.weekLoad = i => { E.weekSave(); s.weekIndex = Math.max(0, i); const w = s.weekData[s.weekIndex] || { done: [false, false, false, false, false, false, false], extra: 0, adjustments: [] }; s.done = [...w.done]; s.extra = Number(w.extra || 0); s.adjustments = [...w.adjustments]; s.day = 0; E.render(); toast(`已切换到第 ${s.weekIndex + 1} 周测试`); };
+  E.weekLoad = i => { E.weekSave(); s.weekIndex = Math.max(0, i); const w = s.weekData[s.weekIndex] || { done: [false, false, false, false, false, false, false], extra: 0, adjustments: [] }; s.done = Array.from({ length: 7 }, (_, index) => E.isCheckinDone(s.weekIndex, index, w.done?.[index])); s.extra = Number(w.extra || 0); s.adjustments = [...w.adjustments]; s.day = 0; E.render(); toast(`已切换到第 ${s.weekIndex + 1} 周测试`); };
   window.switchTestWeek = d => E.weekLoad(s.weekIndex + d);
   window.resetCurrentWeek = () => { if (roleName === '孩子') return toast('请切换至爸爸或妈妈窗口'); s.done = [false, false, false, false, false, false, false]; s.extra = 0; s.adjustments = []; Object.keys(s.taskChecks).filter(key => key.startsWith(`${s.weekIndex}-`)).forEach(key => delete s.taskChecks[key]); s.day = 0; E.weekSave(); E.render(); toast('本周测试数据已重置'); };
   window.role = button => { roleName = button.textContent.trim(); $$('.family-roles .role').forEach(x => { const on = x === button; x.classList.toggle('on', on); x.setAttribute('aria-pressed', on ? 'true' : 'false'); }); $('.family-switch-label').textContent = `身份体验 · ${roleName}测试窗口`; $('.family-switch p').textContent = roleName === '孩子' ? '孩子可以完成小约定、打卡和查看加减分详情；清单内容由家长管理。' : `${roleName}拥有加减分、兑换扣除、购买宠物与重置本周测试权限；小约定在下方“修改规则”中编辑。`; parentActions.classList.toggle('show', roleName !== '孩子'); E.render(); toast(`已切换至${roleName}测试窗口`); };
