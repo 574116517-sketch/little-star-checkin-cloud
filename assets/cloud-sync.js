@@ -37,7 +37,10 @@
   const parentLedgerResetVersion = 1;
   const restoredParentRecord = { id: 'ledger-reset-20260922-2124', reason: '没有配合写作业', actor: '爸爸', time: '09/22 21:24', n: -10 };
   const applyParentLedgerReset = state => {
-    if (!state || typeof state !== 'object' || Number(state.parentLedgerResetVersion || 0) >= parentLedgerResetVersion) return false;
+    if (!state || typeof state !== 'object') return false;
+    const current = Array.isArray(state.adjustments) ? state.adjustments : [];
+    const alreadyRestored = Number(state.parentLedgerResetVersion || 0) >= parentLedgerResetVersion && current.length === 1 && current[0]?.id === restoredParentRecord.id && Number(current[0]?.n) === -10;
+    if (alreadyRestored) return false;
     const weekIndex = Math.max(0, Number.isInteger(state.weekIndex) ? state.weekIndex : 0);
     state.adjustments = [{ ...restoredParentRecord }];
     state.extra = -10;
@@ -177,7 +180,7 @@
         merged.petAssetResetVersion = Number(state.petAssetResetVersion);
       }
       // 家长奖惩恢复是明确替换，不允许日志并集合并把测试记录重新带回来。
-      if (Number(state?.parentLedgerResetVersion || 0) > Number(stateBase?.parentLedgerResetVersion || 0)) {
+      if (Number(state?.parentLedgerResetVersion || 0) >= parentLedgerResetVersion) {
         const weekIndex = Math.max(0, Number.isInteger(state.weekIndex) ? state.weekIndex : 0);
         merged.adjustments = [{ ...restoredParentRecord }];
         merged.extra = -10;
