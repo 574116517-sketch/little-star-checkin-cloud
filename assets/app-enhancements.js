@@ -252,11 +252,11 @@
     let monthDone = 0;
     for (let i = 0; i < first; i++) cells.push('<span class="blank"></span>');
     for (let day = 1; day <= count; day++) {
-      const cellDate = new Date(year, monthIndex, day), record = E.calendarCheckin(cellDate), isToday = cellDate.toDateString() === today.toDateString(), isFuture = cellDate > today, missed = record.available && !record.done && !isFuture && !isToday;
-      if (record.done) monthDone += 1;
-      const mark = record.done ? '★' : missed ? '×' : '·';
-      const title = record.done ? `已打卡 +${record.score} 分` : missed ? '当日未打卡' : isToday ? '今日待打卡' : '尚未到达';
-      cells.push(`<button type="button" class="${record.done ? 'done' : ''} ${missed ? 'missed' : ''} ${isToday ? 'today' : ''}" title="${title}"><b>${day}</b><span class="mark">${mark}</span></button>`);
+      const cellDate = new Date(year, monthIndex, day), record = E.calendarCheckin(cellDate), isToday = cellDate.toDateString() === today.toDateString(), isFuture = cellDate > today, shownDone = record.done && !isFuture, missed = record.available && !shownDone && !isFuture && !isToday;
+      if (shownDone) monthDone += 1;
+      const mark = shownDone ? '★' : missed ? '×' : '·';
+      const title = shownDone ? `已打卡 +${record.score} 分` : missed ? '当日未打卡' : isToday ? '今日待打卡' : '尚未到达';
+      cells.push(`<button type="button" class="${shownDone ? 'done' : ''} ${missed ? 'missed' : ''} ${isToday ? 'today' : ''}" title="${title}"><b>${day}</b><span class="mark">${mark}</span></button>`);
     }
     $('#calendar').innerHTML = cells.join('');
     const title = $('.month-select b'); if (title) title.textContent = `${year} 年 ${monthIndex + 1} 月`;
@@ -347,13 +347,34 @@
   const taskManager = document.createElement('div'); taskManager.className = 'parent-modal'; taskManager.hidden = true;
   taskManager.innerHTML = '<div class="modal-card"><h2>管理小约定</h2><p>工作日和周末清单分开设置；修改后，孩子当天打开“我完成啦！”即可看到最新内容。</p><div class="task-manager-tabs"><button id="eTaskWeekday" onclick="selectTaskManagerGroup(\'weekday\')">周一至周五</button><button id="eTaskWeekend" onclick="selectTaskManagerGroup(\'weekend\')">周末</button></div><div id="eTaskManageList"></div><div class="task-add"><input id="eNewTask" type="text" placeholder="输入新的小约定"><button onclick="addTaskTemplate()">添加</button></div><div class="modal-actions"><button class="primary" onclick="closeTaskManager()">完成</button></div></div>';
   document.body.append(taskManager);
-  E.renderTaskManager = () => { $('#eTaskWeekday').classList.toggle('on', taskManagerGroup === 'weekday'); $('#eTaskWeekend').classList.toggle('on', taskManagerGroup === 'weekend'); const list = s.taskTemplates[taskManagerGroup]; $('#eTaskManageList').innerHTML = list.map((task, index) => `<div class="task-edit-row"><input value="${E.escape(task.text)}" onchange="updateTaskTemplate(${index}, this.value)"><button class="task-delete" title="删除" onclick="deleteTaskTemplate(${index})">×</button></div>`).join('') || '<p class="sub">暂无条目，可在下方添加。</p>'; $('#eNewTask').value = ''; };
+  E.renderTaskManager = () => { $('#eTaskWeekday').classList.toggle('on', taskManagerGroup === 'weekday'); $('#eTaskWeekend').classList.toggle('on', taskManagerGroup === 'weekend'); const list = s.taskTemplates[taskManagerGroup]; $('#eTaskManageList').innerHTML = list.map((task, index) => `<div class="task-edit-row"><input data-task-index="${index}" value="${E.escape(task.text)}"><button class="task-delete" title="删除" onclick="deleteTaskTemplate(${index})">×</button></div>`).join('') || '<p class="sub">暂无条目，可在下方添加。</p>'; $('#eNewTask').value = ''; };
+  E.captureTaskManagerInputs = () => {
+    let valid = true;
+    $('#eTaskManageList input[data-task-index]').forEach(input => {
+      const index = Number(input.dataset.taskIndex), text = input.value.trim();
+      input.style.borderColor = text ? '' : '#e35b70';
+      if (!text) { valid = false; return; }
+      if (s.taskTemplates[taskManagerGroup]?.[index]) s.taskTemplates[taskManagerGroup][index].text = text;
+    });
+    return valid;
+  };
   window.openTaskManager = () => { if (roleName === '孩子') return toast('请切换到爸爸或妈妈测试窗口后管理小约定'); taskManager.hidden = false; E.renderTaskManager(); };
-  window.closeTaskManager = () => taskManager.hidden = true;
-  window.selectTaskManagerGroup = group => { taskManagerGroup = group; E.renderTaskManager(); };
-  window.updateTaskTemplate = (index, value) => { const text = value.trim(); if (!text) return E.renderTaskManager(); s.taskTemplates[taskManagerGroup][index].text = text; E.persist(); E.renderTaskManager(); };
-  window.deleteTaskTemplate = index => { s.taskTemplates[taskManagerGroup].splice(index, 1); E.persist(); E.renderTaskManager(); };
-  window.addTaskTemplate = () => { const input = $('#eNewTask'), text = input.value.trim(); if (!text) return toast('先输入小约定内容'); s.taskTemplates[taskManagerGroup].push({ text }); E.persist(); E.renderTaskManager(); };
+  window.closeTaskManager = () => {
+    if (!E.captureTaskManagerInputs()) return toast('小约定内容不能为空');
+    E.persist();
+    taskManager.hidden = true;
+    E.render();
+    toast('小约定已保存');
+  };
+  window.selectTaskManagerGroup = group => {
+    if (!E.captureTaskManagerInputs()) return toast('请先补全空白的小约定');
+    E.persist();
+    taskManagerGroup = group;
+    E.renderTaskManager();
+  };
+  window.updateTaskTemplate = (index, value) => { const text = value.trim(); if (!text) return; s.taskTemplates[taskManagerGroup][index].text = text; };
+  window.deleteTaskTemplate = index => { if (!E.captureTaskManagerInputs()) return toast('请先补全空白的小约定'); s.taskTemplates[taskManagerGroup].splice(index, 1); E.persist(); E.renderTaskManager(); };
+  window.addTaskTemplate = () => { if (!E.captureTaskManagerInputs()) return toast('请先补全空白的小约定'); const input = $('#eNewTask'), text = input.value.trim(); if (!text) return toast('先输入小约定内容'); s.taskTemplates[taskManagerGroup].push({ text }); E.persist(); E.renderTaskManager(); };
 
   const growth = document.createElement('div'); growth.className = 'growth-box'; growth.innerHTML = '<div class="growth-title"><span>宠物培养进度</span><b id="eStage">蛋阶段</b></div><div class="growth-bar"><i id="eGrowth"></i></div><p id="eGrowthCopy"></p><p class="growth-cheer" id="eCheer"></p>'; $('#pet .pet-card').prepend(growth);
   const oldGallery = $('#pet .pose-gallery');
@@ -483,7 +504,7 @@
   const officialRolePanel = document.createElement('section');
   officialRolePanel.className = 'official-role-panel';
   officialRolePanel.hidden = true;
-  officialRolePanel.innerHTML = '<div><b id="officialRoleTitle">家长管理入口</b><span>可管理积分、每日规则和宠物培养数据</span></div><div class="official-role-actions"><button type="button" onclick="openPointControl()">调整本周积分</button><button type="button" onclick="openCashBalanceControl()">累计日常积分</button><button type="button" onclick="openTaskManager()">修改每日规则</button><button type="button" data-pet-control="material" onclick="openPetParentControl(\'material\', this)">调整宠物材料</button><button type="button" data-pet-control="level" onclick="openPetParentControl(\'level\', this)">调整当前宠物等级</button><button type="button" data-pet-control="coupons" onclick="openPetParentControl(\'coupons\', this)">调整宠物券</button><button type="button" data-pet-control="rules" onclick="openPetParentControl(\'rules\', this)">调整宠物规则</button></div>';
+  officialRolePanel.innerHTML = '<div><b id="officialRoleTitle">家长管理入口</b><span>可管理积分、每日规则和宠物培养数据</span></div><div class="official-role-actions"><button type="button" onclick="openPointControl()">调整本周积分</button><button type="button" onclick="openCashBalanceControl()">累计日常积分</button><button type="button" onclick="openTaskManager()">修改每日规则</button><button type="button" data-pet-control="material" onclick="openPetParentControl(\'material\', this)">添加宠物材料</button><button type="button" data-pet-control="level" onclick="openPetParentControl(\'level\', this)">调整当前宠物等级</button><button type="button" data-pet-control="coupons" onclick="openPetParentControl(\'coupons\', this)">调整宠物券</button><button type="button" data-pet-control="rules" onclick="openPetParentControl(\'rules\', this)">调整宠物规则</button></div>';
   $('.top').after(officialRolePanel);
   const officialRoleStyle = document.createElement('style');
   officialRoleStyle.textContent = '.official-role-panel{display:grid;gap:10px;margin:12px 10px 0;padding:13px;border:2px solid #8edcf3;border-radius:16px;background:linear-gradient(135deg,#e7f8ff,#f9fdff);box-shadow:0 4px 0 #aeddec}.official-role-panel[hidden]{display:none}.official-role-panel b,.official-role-panel span{display:block}.official-role-panel b{color:#0a67b0;font-size:16px}.official-role-panel span{margin-top:4px;color:#4d81a7;font-size:12px;line-height:1.45}.official-role-actions{display:grid;grid-template-columns:repeat(2,1fr);gap:6px}.official-role-actions button{min-height:40px;padding:6px 4px;border:1px solid #96d7ee;border-radius:10px;background:#f5fcff;color:#0b69b1;font:inherit;font-size:11px;font-weight:900;transition:.12s}.official-role-actions button:active,.official-role-actions button.is-active{transform:translateY(1px);background:#1778c8;color:#fff;border-color:#1778c8;box-shadow:inset 0 2px 5px #07589d55}';
@@ -504,11 +525,11 @@
     petParentMode = mode;
     clearPetControlActive();
     if (button) button.classList.add('is-active');
-    const titles = { material: '调整宠物材料', level: '调整当前宠物等级', coupons: '调整宠物券', rules: '调整宠物升级规则' };
+    const titles = { material: '添加宠物材料', level: '调整当前宠物等级', coupons: '调整宠物券', rules: '调整宠物升级规则' };
     $('#ePetParentTitle').textContent = titles[mode] || '调整宠物数据';
     if (mode === 'material') {
-      $('#ePetParentHint').textContent = '只修改宠物材料余额，不会改动积分或扣分记录。';
-      $('#ePetParentFields').innerHTML = `<label>宠物材料余额<input id="ePetMaterialInput" type="number" min="0" step="1" value="${E.material()}"></label>`;
+      $('#ePetParentHint').textContent = `当前宠物材料：${E.material()}。输入本次要添加的数量，不会改动积分或扣分记录。`;
+      $('#ePetParentFields').innerHTML = '<label>添加数量<input id="ePetMaterialInput" type="number" min="1" step="1" placeholder="例如 3000"></label>';
     } else if (mode === 'level') {
       $('#ePetParentHint').textContent = '按当前规则设置宠物阶段，不会改动积分、材料或扣分记录。';
       $('#ePetParentFields').innerHTML = `<label>当前宠物等级<select id="ePetLevelInput"><option value="0">蛋阶段</option><option value="1">LV1 · 第一阶段</option><option value="2">LV2 · 成长阶段</option><option value="3">LV3 · 最终阶段</option></select></label>`;
@@ -528,8 +549,8 @@
     if (roleName === '孩子') return toast('请切换到爸爸或妈妈页面后管理宠物');
     if (petParentMode === 'material') {
       const value = Number($('#ePetMaterialInput').value);
-      if (!Number.isInteger(value) || value < 0) return toast('请输入不小于 0 的整数');
-      s.materialBalance = value;
+      if (!Number.isInteger(value) || value <= 0) return toast('请输入大于 0 的整数');
+      E.changeMaterial(value);
     } else if (petParentMode === 'level') {
       const level = Number($('#ePetLevelInput').value);
       if (![0, 1, 2, 3].includes(level)) return toast('请选择有效等级');
@@ -680,6 +701,13 @@
   };
   E.render = () => render();
   render = function () {
+    // 当前周中尚未到达的日期永远不能保留为已打卡，修正早期周切换造成的错位状态。
+    const actualWeek = Math.max(0, Math.floor((localMidnight().getTime() - checkinStart.getTime()) / dayMs / 7));
+    const actualDay = Math.floor((localMidnight().getTime() - checkinStart.getTime()) / dayMs) % 7;
+    if (s.weekIndex === actualWeek) {
+      for (let index = actualDay + 1; index < 7; index++) s.done[index] = false;
+      if (s.weekData[actualWeek]?.done) for (let index = actualDay + 1; index < 7; index++) s.weekData[actualWeek].done[index] = false;
+    }
     E.baseUI();
     E.renderProfile();
     E.award();
