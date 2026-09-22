@@ -34,6 +34,19 @@
     state.petAssetResetVersion = petAssetResetVersion;
     return true;
   };
+  const parentLedgerResetVersion = 1;
+  const restoredParentRecord = { id: 'ledger-reset-20260922-2124', reason: '没有配合写作业', actor: '爸爸', time: '09/22 21:24', n: -10 };
+  const applyParentLedgerReset = state => {
+    if (!state || typeof state !== 'object' || Number(state.parentLedgerResetVersion || 0) >= parentLedgerResetVersion) return false;
+    const weekIndex = Math.max(0, Number.isInteger(state.weekIndex) ? state.weekIndex : 0);
+    state.adjustments = [{ ...restoredParentRecord }];
+    state.extra = -10;
+    state.weekData = Array.isArray(state.weekData) ? state.weekData : [];
+    const week = state.weekData[weekIndex] && typeof state.weekData[weekIndex] === 'object' ? state.weekData[weekIndex] : { done: [false, false, false, false, false, false, false] };
+    state.weekData[weekIndex] = { ...week, extra: -10, adjustments: [{ ...restoredParentRecord }] };
+    state.parentLedgerResetVersion = parentLedgerResetVersion;
+    return true;
+  };
 
   // 正式云端版不展示开发测试控件；离线复刻版仍保留这些测试能力。
   document.querySelector('.reset-test-bar')?.remove();
@@ -163,6 +176,16 @@
         merged.pet = 0;
         merged.petAssetResetVersion = Number(state.petAssetResetVersion);
       }
+      // 家长奖惩恢复是明确替换，不允许日志并集合并把测试记录重新带回来。
+      if (Number(state?.parentLedgerResetVersion || 0) > Number(stateBase?.parentLedgerResetVersion || 0)) {
+        const weekIndex = Math.max(0, Number.isInteger(state.weekIndex) ? state.weekIndex : 0);
+        merged.adjustments = [{ ...restoredParentRecord }];
+        merged.extra = -10;
+        merged.weekData = Array.isArray(merged.weekData) ? merged.weekData : [];
+        const week = merged.weekData[weekIndex] && typeof merged.weekData[weekIndex] === 'object' ? merged.weekData[weekIndex] : { done: [false, false, false, false, false, false, false] };
+        merged.weekData[weekIndex] = { ...week, extra: -10, adjustments: [{ ...restoredParentRecord }] };
+        merged.parentLedgerResetVersion = Number(state.parentLedgerResetVersion);
+      }
       const response = await fetch(`${endpoint}?id=eq.${encodeURIComponent(familyId)}`, {
         method: 'PATCH', headers: { ...headers, Prefer: 'return=representation' }, keepalive: true,
         body: JSON.stringify({ state: merged, updated_at: new Date().toISOString() })
@@ -264,6 +287,14 @@
           initialLoadComplete = true;
           queueSave(remote.state, 0, beforePetBalanceReset);
           setStatus('☁ 宠物材料已清零，宠物券保留 1 张', 'ok');
+          return;
+        }
+        const beforeParentLedgerReset = copy(remote.state || {});
+        if (applyParentLedgerReset(remote.state)) {
+          replaceState(remote.state);
+          initialLoadComplete = true;
+          queueSave(remote.state, 0, beforeParentLedgerReset);
+          setStatus('☁ 家长奖惩记录已恢复', 'ok');
           return;
         }
         // 关键：请求可能在一次喂养之前就已经发出。若喂养保存先完成，
