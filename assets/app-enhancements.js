@@ -75,6 +75,7 @@
   s.weekData = Array.isArray(s.weekData) ? s.weekData : [];
   s.redeemed = Math.max(0, Number(s.redeemed || 0));
   s.cashAdjust = Number(s.cashAdjust || 0);
+  s.weekScoreAdjust = Number.isFinite(Number(s.weekScoreAdjust)) ? Number(s.weekScoreAdjust) : 0;
   s.feedUsed = Math.max(0, Number(s.feedUsed || 0));
   const defaultPetStageThresholds = [1000, 2500, 5000];
   const normalizePetStageThresholds = value => {
@@ -116,10 +117,12 @@
     s.weekData = Array.isArray(s.weekData) ? s.weekData.map(week => ({
       done: Array.isArray(week?.done) ? Array.from({ length: 7 }, (_, index) => !!week.done[index]) : [false, false, false, false, false, false, false],
       extra: Number.isFinite(Number(week?.extra)) ? Number(week.extra) : 0,
+      weekScoreAdjust: Number.isFinite(Number(week?.weekScoreAdjust)) ? Number(week.weekScoreAdjust) : 0,
       adjustments: Array.isArray(week?.adjustments) ? week.adjustments : []
     })) : [];
     s.redeemed = Math.max(0, Number(s.redeemed || 0));
     s.cashAdjust = Number.isFinite(Number(s.cashAdjust)) ? Number(s.cashAdjust) : 0;
+    s.weekScoreAdjust = Number.isFinite(Number(s.weekScoreAdjust)) ? Number(s.weekScoreAdjust) : 0;
     s.feedUsed = Math.max(0, Number(s.feedUsed || 0));
     s.petStageThresholds = normalizePetStageThresholds(s.petStageThresholds);
     s.calendarOffset = Number.isInteger(s.calendarOffset) ? Math.max(-12, Math.min(12, s.calendarOffset)) : 0;
@@ -153,7 +156,7 @@
       if (typeof E.weekSave === 'function') E.weekSave();
       s.weekIndex = nextWeek;
       const week = s.weekData[nextWeek] || { done: [false, false, false, false, false, false, false], extra: 0, adjustments: [] };
-      s.done = [...week.done]; s.extra = Number(week.extra || 0); s.adjustments = Array.isArray(week.adjustments) ? [...week.adjustments] : [];
+      s.done = [...week.done]; s.extra = Number(week.extra || 0); s.weekScoreAdjust = Number(week.weekScoreAdjust || 0); s.adjustments = Array.isArray(week.adjustments) ? [...week.adjustments] : [];
       changed = true;
     }
     if (nextDay !== s.day) { s.day = nextDay; changed = true; }
@@ -180,10 +183,10 @@
     return Object.prototype.hasOwnProperty.call(s.checkinScores || {}, key) || Object.prototype.hasOwnProperty.call(s.checkinMaterialAwards || {}, key);
   };
   E.weekCheckinTotal = (weekIndex, done = []) => (done || []).reduce((sum, isDone, dayIndex) => sum + (isDone ? E.checkinScore(weekIndex, dayIndex) : 0), 0);
-  E.weekPoints = () => Math.max(0, E.weekCheckinTotal(s.weekIndex, s.done) + Number(s.extra || 0));
-  E.gross = () => E.weekPoints() + s.weekData.reduce((sum, week, index) => index === s.weekIndex ? sum : sum + Math.max(0, E.weekCheckinTotal(index, week.done) + Number(week.extra || 0)), 0);
+  E.weekPoints = () => Math.max(0, E.weekCheckinTotal(s.weekIndex, s.done) + Number(s.extra || 0) + Number(s.weekScoreAdjust || 0));
+  E.gross = () => E.weekPoints() + s.weekData.reduce((sum, week, index) => index === s.weekIndex ? sum : sum + Math.max(0, E.weekCheckinTotal(index, week.done) + Number(week.extra || 0) + Number(week.weekScoreAdjust || 0)), 0);
   E.daily = () => Math.max(0, E.gross() + s.cashAdjust - s.redeemed);
-  E.completedGross = () => s.weekData.reduce((sum, week, index) => index === s.weekIndex ? sum : sum + Math.max(0, E.weekCheckinTotal(index, week.done) + Number(week.extra || 0)), 0);
+  E.completedGross = () => s.weekData.reduce((sum, week, index) => index === s.weekIndex ? sum : sum + Math.max(0, E.weekCheckinTotal(index, week.done) + Number(week.extra || 0) + Number(week.weekScoreAdjust || 0)), 0);
   E.redeemable = () => Math.max(0, E.completedGross() + (s.day >= 5 ? E.weekPoints() : 0) + s.cashAdjust - s.redeemed);
   E.parentTotal = () => Number(s.extra || 0) + s.weekData.reduce((sum, week, index) => index === s.weekIndex ? sum : sum + Number(week.extra || 0), 0);
   // 宠物材料只跟随真实打卡 + 家长调整的累计分；现金累计的手动加减/兑换不改变材料。
@@ -475,6 +478,21 @@
   feed.addEventListener('pointerdown', event => { event.preventDefault(); feedLong = false; feedHold = setTimeout(() => { feedLong = true; E.feedOnce(); feedInterval = setInterval(E.feedOnce, 150); }, 380); });
   ['pointerup','pointerleave','pointercancel'].forEach(type => feed.addEventListener(type, event => { event.preventDefault(); const wasLong = feedLong; stopFeedHold(); if (!wasLong && type === 'pointerup') E.feedOnce(); }));
 
+  // “调整本周积分”只改本周总分，不写入家长奖惩流水。
+  const weekScoreModal = document.createElement('div'); weekScoreModal.className = 'parent-modal'; weekScoreModal.hidden = true;
+  weekScoreModal.innerHTML = '<div class="modal-card"><h2>调整本周积分</h2><p>这里只修改本周总分，不会新增家长奖励或惩罚记录，也不会改变宠物材料。</p><input id="eWeekScoreAdjust" type="number" placeholder="正数增加，负数减少"><div class="modal-actions"><button onclick="closeWeekScoreControl()">取消</button><button class="primary" onclick="applyWeekScoreControl()">确认修改</button></div></div>';
+  document.body.append(weekScoreModal);
+  window.openWeekScoreControl = () => { if (roleName === '孩子') return toast('请切换到爸爸或妈妈页面后调整本周积分'); $('#eWeekScoreAdjust').value = ''; weekScoreModal.hidden = false; };
+  window.closeWeekScoreControl = () => weekScoreModal.hidden = true;
+  window.applyWeekScoreControl = () => {
+    const n = Number($('#eWeekScoreAdjust').value);
+    if (!Number.isFinite(n) || !n) return toast('请输入有效的本周加减分');
+    s.weekScoreAdjust = Number(s.weekScoreAdjust || 0) + n;
+    weekScoreModal.hidden = true;
+    E.render();
+    toast(`本周积分已${n > 0 ? '增加' : '减少'} ${Math.abs(n)} 分；家长奖惩记录未改变`);
+  };
+
   const modal = document.createElement('div'); modal.className = 'parent-modal'; modal.hidden = true;
   modal.innerHTML = '<div class="modal-card"><h2>家长调整积分</h2><p>这里是本周的鼓励与惩罚账。填写正数加星、负数扣星，会同步本周小星星、累计日常积分、宠物材料和本周宠物券判断。</p><input id="eAdjust" type="number" placeholder="例如 +5 鼓励 / -2 提醒"><input id="eReason" type="text" style="margin-top:8px" placeholder="调整标题，例如：完成阅读奖励"><div id="eFavorites" class="favorite-list"></div><button class="softbtn" style="margin-top:8px;width:100%" onclick="saveFavoriteReason()">☆ 收藏标题和固定分数</button><div class="modal-actions"><button onclick="closePointControl()">取消</button><button class="primary" onclick="applyPointControl()">确认修改</button></div></div>';
   document.body.append(modal);
@@ -562,10 +580,10 @@
   E.catalog = q => { if ($('#catalog').hidden) { E.catalogDirty = true; return; } const list = roster.filter(p => (catalogType === '全部' || p.type === catalogType) && p.name.includes(q || '')); $('#catalogGrid').innerHTML = list.map((p, i) => { const owned = s.adopted.includes(p.asset); if (owned) return `<button class="catalog-card owned" onclick="showOwnedPet(${p.asset})"><span class="collect-badge">✓</span><span class="pet-number">${p.type}</span><span class="stage-art ${p.art ? 'fire-art' : ''}" style="${E.artStyle(p)}"></span><strong>${p.name}</strong><small>${p.gift ? '默认赠送' : '已收集'}</small></button>`; const lock = i % 2 ? 'assets/catalog-cell-lock.png' : 'assets/catalog-cell-question.png'; return `<button class="catalog-card locked" onclick="showLockedPet(${p.asset})"><span class="stage-art" style="background-image:url('${lock}')"></span><strong>???</strong><small>未收集</small></button>`; }).join(''); $('#catalogCount').innerHTML = `已收集 <b>${s.adopted.length}</b> / ${roster.length}<br>彩色为已收集 · 剪影锁定为未收集`; E.catalogLoaded = true; E.catalogDirty = false; };
   window.filterCatalog = q => E.catalog(q);
 
-  E.weekSave = () => { const records = E.reconcileCurrentWeek(); s.weekData[s.weekIndex] = { done: [...s.done], extra: Number(s.extra || 0), adjustments: [...records] }; };
-  E.weekLoad = i => { E.weekSave(); s.weekIndex = Math.max(0, i); const w = s.weekData[s.weekIndex] || { done: [false, false, false, false, false, false, false], extra: 0, adjustments: [] }; s.done = Array.from({ length: 7 }, (_, index) => E.isCheckinDone(s.weekIndex, index, w.done?.[index])); s.extra = Number(w.extra || 0); s.adjustments = [...w.adjustments]; s.day = 0; E.render(); toast(`已切换到第 ${s.weekIndex + 1} 周测试`); };
+  E.weekSave = () => { const records = E.reconcileCurrentWeek(); s.weekData[s.weekIndex] = { done: [...s.done], extra: Number(s.extra || 0), weekScoreAdjust: Number(s.weekScoreAdjust || 0), adjustments: [...records] }; };
+  E.weekLoad = i => { E.weekSave(); s.weekIndex = Math.max(0, i); const w = s.weekData[s.weekIndex] || { done: [false, false, false, false, false, false, false], extra: 0, weekScoreAdjust: 0, adjustments: [] }; s.done = Array.from({ length: 7 }, (_, index) => E.isCheckinDone(s.weekIndex, index, w.done?.[index])); s.extra = Number(w.extra || 0); s.weekScoreAdjust = Number(w.weekScoreAdjust || 0); s.adjustments = [...w.adjustments]; s.day = 0; E.render(); toast(`已切换到第 ${s.weekIndex + 1} 周测试`); };
   window.switchTestWeek = d => E.weekLoad(s.weekIndex + d);
-  window.resetCurrentWeek = () => { if (roleName === '孩子') return toast('请切换至爸爸或妈妈窗口'); s.done = [false, false, false, false, false, false, false]; s.extra = 0; s.adjustments = []; Object.keys(s.taskChecks).filter(key => key.startsWith(`${s.weekIndex}-`)).forEach(key => delete s.taskChecks[key]); s.day = 0; E.weekSave(); E.render(); toast('本周测试数据已重置'); };
+  window.resetCurrentWeek = () => { if (roleName === '孩子') return toast('请切换至爸爸或妈妈窗口'); s.done = [false, false, false, false, false, false, false]; s.extra = 0; s.weekScoreAdjust = 0; s.adjustments = []; Object.keys(s.taskChecks).filter(key => key.startsWith(`${s.weekIndex}-`)).forEach(key => delete s.taskChecks[key]); s.day = 0; E.weekSave(); E.render(); toast('本周测试数据已重置'); };
   window.role = button => { roleName = button.textContent.trim(); $$('.family-roles .role').forEach(x => { const on = x === button; x.classList.toggle('on', on); x.setAttribute('aria-pressed', on ? 'true' : 'false'); }); $('.family-switch-label').textContent = `身份体验 · ${roleName}测试窗口`; $('.family-switch p').textContent = roleName === '孩子' ? '孩子可以完成小约定、打卡和查看加减分详情；清单内容由家长管理。' : `${roleName}拥有加减分、兑换扣除、购买宠物与重置本周测试权限；小约定在下方“修改规则”中编辑。`; parentActions.classList.toggle('show', roleName !== '孩子'); E.render(); toast(`已切换至${roleName}测试窗口`); };
   $$('.family-roles .role').forEach(button => { button.onclick = event => { event.preventDefault(); window.role(button); }; });
 
@@ -573,7 +591,7 @@
   const officialRolePanel = document.createElement('section');
   officialRolePanel.className = 'official-role-panel';
   officialRolePanel.hidden = true;
-  officialRolePanel.innerHTML = '<div><b id="officialRoleTitle">家长管理入口</b><span>可管理积分、每日规则和宠物培养数据</span></div><div class="official-role-actions"><button type="button" onclick="openPointControl()">调整本周积分</button><button type="button" onclick="openCashBalanceControl()">累计日常积分</button><button type="button" onclick="openTaskManager()">修改每日规则</button><button type="button" data-pet-control="material" onclick="openPetParentControl(\'material\', this)">添加宠物材料</button><button type="button" data-pet-control="level" onclick="openPetParentControl(\'level\', this)">调整当前宠物等级</button><button type="button" data-pet-control="coupons" onclick="openPetParentControl(\'coupons\', this)">调整宠物券</button><button type="button" data-pet-control="rules" onclick="openPetParentControl(\'rules\', this)">调整宠物规则</button></div>';
+  officialRolePanel.innerHTML = '<div><b id="officialRoleTitle">家长管理入口</b><span>可管理积分、每日规则和宠物培养数据</span></div><div class="official-role-actions"><button type="button" onclick="openWeekScoreControl()">调整本周积分</button><button type="button" onclick="openCashBalanceControl()">累计日常积分</button><button type="button" onclick="openTaskManager()">修改每日规则</button><button type="button" data-pet-control="material" onclick="openPetParentControl(\'material\', this)">添加宠物材料</button><button type="button" data-pet-control="level" onclick="openPetParentControl(\'level\', this)">调整当前宠物等级</button><button type="button" data-pet-control="coupons" onclick="openPetParentControl(\'coupons\', this)">调整宠物券</button><button type="button" data-pet-control="rules" onclick="openPetParentControl(\'rules\', this)">调整宠物规则</button></div>';
   $('.top').after(officialRolePanel);
   const officialRoleStyle = document.createElement('style');
   officialRoleStyle.textContent = '.official-role-panel{display:grid;gap:10px;margin:12px 10px 0;padding:13px;border:2px solid #8edcf3;border-radius:16px;background:linear-gradient(135deg,#e7f8ff,#f9fdff);box-shadow:0 4px 0 #aeddec}.official-role-panel[hidden]{display:none}.official-role-panel b,.official-role-panel span{display:block}.official-role-panel b{color:#0a67b0;font-size:16px}.official-role-panel span{margin-top:4px;color:#4d81a7;font-size:12px;line-height:1.45}.official-role-actions{display:grid;grid-template-columns:repeat(2,1fr);gap:6px}.official-role-actions button{min-height:40px;padding:6px 4px;border:1px solid #96d7ee;border-radius:10px;background:#f5fcff;color:#0b69b1;font:inherit;font-size:11px;font-weight:900;transition:.12s}.official-role-actions button:active,.official-role-actions button.is-active{transform:translateY(1px);background:#1778c8;color:#fff;border-color:#1778c8;box-shadow:inset 0 2px 5px #07589d55}';
@@ -805,7 +823,7 @@
   window.complete = button => { if (button?.dataset?.running) return; window.openTaskChecklist(button); };
   E.fly = (from, count, done) => { count = Math.min(10, Math.max(1, count)); const bank = $('.bank'), target = bank.getBoundingClientRect(), sx = from.left + from.width / 2, sy = from.top + from.height / 2, dx = target.left + target.width / 2 - sx, dy = target.top + target.height / 2 - sy; for (let i = 0; i < count; i++) { const star = document.createElement('b'); star.className = 'star-flight clean'; star.textContent = '★'; star.style.setProperty('--x', (sx + (Math.random() - .5) * 18) + 'px'); star.style.setProperty('--y', (sy + (Math.random() - .5) * 12) + 'px'); star.style.setProperty('--dx', (dx + (Math.random() - .5) * 17) + 'px'); star.style.setProperty('--dy', (dy + (Math.random() - .5) * 14) + 'px'); star.style.setProperty('--size', (i === 0 ? 30 : 14 + Math.random() * 7) + 'px'); star.style.setProperty('--delay', (i / count * .38) + 's'); document.body.append(star); setTimeout(() => star.remove(), 1400); } setTimeout(() => { bank.classList.remove('e-arrive'); void bank.offsetWidth; bank.classList.add('e-arrive'); const r = bank.getBoundingClientRect(); const ring = document.createElement('i'); ring.className = 'score-ripple'; ring.style.setProperty('--x', (r.left + r.width / 2) + 'px'); ring.style.setProperty('--y', (r.top + r.height / 2) + 'px'); document.body.append(ring); setTimeout(() => ring.remove(), 800); done(); }, 1050); };
   E.roll = (a, b) => { const start = performance.now(), duration = 620, el = $('#score'); const frame = now => { const p = Math.min(1, (now - start) / duration), v = Math.round(a + (b - a) * (1 - Math.pow(1 - p, 3))); el.innerHTML = String(v).padStart(2, '0') + '<small> 颗</small>'; if (p < 1) requestAnimationFrame(frame); }; requestAnimationFrame(frame); };
-  window.resetTest = () => { s.done = [false, false, false, false, false, false, false]; s.extra = 0; s.day = 0; s.pet = fireAsset; s.petCoupons = 0; s.adopted = [fireAsset]; s.adjustments = []; s.taskChecks = {}; s.weekIndex = 0; s.weekData = []; s.weekAwards = {}; s.redeemed = 0; s.cashAdjust = 0; s.feedUsed = 0; s.materialBalance = 0; render(); toast('已还原全部测试数据，默认火属性宠物仍在。'); };
+  window.resetTest = () => { s.done = [false, false, false, false, false, false, false]; s.extra = 0; s.weekScoreAdjust = 0; s.day = 0; s.pet = fireAsset; s.petCoupons = 0; s.adopted = [fireAsset]; s.adjustments = []; s.taskChecks = {}; s.weekIndex = 0; s.weekData = []; s.weekAwards = {}; s.redeemed = 0; s.cashAdjust = 0; s.feedUsed = 0; s.materialBalance = 0; render(); toast('已还原全部测试数据，默认火属性宠物仍在。'); };
   // 图鉴是延迟加载：首页不创建图鉴卡片，也不会请求图鉴图片。
   $('#catalogGrid').innerHTML = '<p class="sub">进入图鉴后加载精灵伙伴…</p>';
   const baseShowPage = window.showPage;
