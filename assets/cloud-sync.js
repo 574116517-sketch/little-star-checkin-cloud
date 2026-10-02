@@ -37,10 +37,8 @@
   const parentLedgerResetVersion = 1;
   const restoredParentRecord = { id: 'ledger-reset-20260922-2124', reason: '没有配合写作业', actor: '爸爸', time: '09/22 21:24', n: -10 };
   const applyParentLedgerReset = state => {
-    if (!state || typeof state !== 'object') return false;
-    const current = Array.isArray(state.adjustments) ? state.adjustments : [];
-    const alreadyRestored = Number(state.parentLedgerResetVersion || 0) >= parentLedgerResetVersion && current.length === 1 && current[0]?.id === restoredParentRecord.id && Number(current[0]?.n) === -10;
-    if (alreadyRestored) return false;
+    // Historical repair is a one-time migration, never a recurring ledger reset.
+    if (!state || typeof state !== 'object' || Number(state.parentLedgerResetVersion || 0) >= parentLedgerResetVersion) return false;
     const weekIndex = Math.max(0, Number.isInteger(state.weekIndex) ? state.weekIndex : 0);
     state.adjustments = [{ ...restoredParentRecord }];
     state.extra = -10;
@@ -163,7 +161,7 @@
   };
 
   async function push(state, stateBase = baselineState) {
-    if (saving) { queuedState = state; return; }
+    if (saving) { queuedState = copy(state); queuedBase = copy(stateBase); return; }
     saving = true;
     setStatus('☁ 正在保存…');
     try {
@@ -180,7 +178,9 @@
         merged.petAssetResetVersion = Number(state.petAssetResetVersion);
       }
       // 家长奖惩恢复是明确替换，不允许日志并集合并把测试记录重新带回来。
-      if (Number(state?.parentLedgerResetVersion || 0) >= parentLedgerResetVersion) {
+      if (Number(state?.parentLedgerResetVersion || 0) >= parentLedgerResetVersion &&
+          Number(state?.parentLedgerResetVersion || 0) > Number(stateBase?.parentLedgerResetVersion || 0) &&
+          Number(latest.state?.parentLedgerResetVersion || 0) < parentLedgerResetVersion) {
         const weekIndex = Math.max(0, Number.isInteger(state.weekIndex) ? state.weekIndex : 0);
         merged.adjustments = [{ ...restoredParentRecord }];
         merged.extra = -10;
@@ -196,20 +196,33 @@
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       const rows = await response.json();
       lastRemoteUpdatedAt = rows[0]?.updated_at || lastRemoteUpdatedAt;
-      baselineState = copy(rows[0]?.state || merged);
-      // 本机也立刻使用合并后的版本，确保爸爸/妈妈页面能看见孩子刚完成的内容。
-      if (!same(readLocal(), baselineState)) {
+      const confirmed = copy(rows[0]?.state || merged);
+      // Rebase edits made while this request was in flight onto the confirmed state.
+      // Keep their original base until this acknowledgement; never replay a delta twice.
+      const localNow = readLocal();
+      const hasNewerEdit = !same(localNow, state);
+      const nextLocal = hasNewerEdit ? mergeChangedState(confirmed, localNow, state) : confirmed;
+      baselineState = confirmed;
+      queuedState = null;
+      queuedBase = null;
+      if (!same(localNow, nextLocal)) {
         applyingRemote = true;
         try {
           Object.keys(s).forEach(key => delete s[key]);
-          Object.assign(s, baselineState);
+          Object.assign(s, nextLocal);
           window.littleStarNormalizeState?.();
           window.syncRealDate?.();
           nativeSetItem(stateKey, JSON.stringify(s));
           render();
         } finally { applyingRemote = false; }
       }
-      clearPendingIfCurrent(state);
+      if (hasNewerEdit) {
+        queuedState = copy(s);
+        queuedBase = copy(confirmed);
+        writePending(queuedState);
+      } else {
+        clearPendingIfCurrent(state);
+      }
       setStatus('☁ 家庭数据已同步', 'ok');
     } catch (error) {
       setStatus('☁ 暂存本机，等待网络恢复', 'warn');
@@ -347,3 +360,4 @@
   // 家庭端轮询：20 秒一次，兼顾多设备同步与手机流量、性能。
   window.setInterval(() => { if (!saving && !queuedState) pull(false); }, 20000);
 })();
+
