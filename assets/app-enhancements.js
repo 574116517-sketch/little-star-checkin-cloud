@@ -591,7 +591,7 @@
   const officialRolePanel = document.createElement('section');
   officialRolePanel.className = 'official-role-panel';
   officialRolePanel.hidden = true;
-  officialRolePanel.innerHTML = '<div><b id="officialRoleTitle">家长管理入口</b><span>可管理积分、每日规则和宠物培养数据</span></div><div class="official-role-actions"><button type="button" onclick="openWeekScoreControl()">调整本周积分</button><button type="button" onclick="openCashBalanceControl()">累计日常积分</button><button type="button" onclick="openTaskManager()">修改每日规则</button><button type="button" data-pet-control="material" onclick="openPetParentControl(\'material\', this)">添加宠物材料</button><button type="button" data-pet-control="level" onclick="openPetParentControl(\'level\', this)">调整当前宠物等级</button><button type="button" data-pet-control="coupons" onclick="openPetParentControl(\'coupons\', this)">调整宠物券</button><button type="button" data-pet-control="rules" onclick="openPetParentControl(\'rules\', this)">调整宠物规则</button></div>';
+  officialRolePanel.innerHTML = '<div><b id="officialRoleTitle">家长管理入口</b><span>可管理积分、每日规则和宠物培养数据</span></div><div class="official-role-actions"><button type="button" onclick="openWeekScoreControl()">调整本周积分</button><button type="button" onclick="openCashBalanceControl()">累计日常积分</button><button type="button" onclick="openTaskManager()">修改每日规则</button><button type="button" data-pet-control="material" onclick="openPetParentControl(\'material\', this)">修改宠物材料</button><button type="button" data-pet-control="level" onclick="openPetParentControl(\'level\', this)">调整当前宠物等级</button><button type="button" data-pet-control="coupons" onclick="openPetParentControl(\'coupons\', this)">调整宠物券</button><button type="button" data-pet-control="rules" onclick="openPetParentControl(\'rules\', this)">调整宠物规则</button></div>';
   $('.top').after(officialRolePanel);
   const officialRoleStyle = document.createElement('style');
   officialRoleStyle.textContent = '.official-role-panel{display:grid;gap:10px;margin:12px 10px 0;padding:13px;border:2px solid #8edcf3;border-radius:16px;background:linear-gradient(135deg,#e7f8ff,#f9fdff);box-shadow:0 4px 0 #aeddec}.official-role-panel[hidden]{display:none}.official-role-panel b,.official-role-panel span{display:block}.official-role-panel b{color:#0a67b0;font-size:16px}.official-role-panel span{margin-top:4px;color:#4d81a7;font-size:12px;line-height:1.45}.official-role-actions{display:grid;grid-template-columns:repeat(2,1fr);gap:6px}.official-role-actions button{min-height:40px;padding:6px 4px;border:1px solid #96d7ee;border-radius:10px;background:#f5fcff;color:#0b69b1;font:inherit;font-size:11px;font-weight:900;transition:.12s}.official-role-actions button:active,.official-role-actions button.is-active{transform:translateY(1px);background:#1778c8;color:#fff;border-color:#1778c8;box-shadow:inset 0 2px 5px #07589d55}';
@@ -612,11 +612,11 @@
     petParentMode = mode;
     clearPetControlActive();
     if (button) button.classList.add('is-active');
-    const titles = { material: '添加宠物材料', level: '调整当前宠物等级', coupons: '调整宠物券', rules: '调整宠物升级规则' };
+    const titles = { material: '修改宠物材料', level: '调整当前宠物等级', coupons: '调整宠物券', rules: '调整宠物升级规则' };
     $('#ePetParentTitle').textContent = titles[mode] || '调整宠物数据';
     if (mode === 'material') {
-      $('#ePetParentHint').textContent = `当前宠物材料：${E.material()}。输入本次要添加的数量，不会改动积分或扣分记录。`;
-      $('#ePetParentFields').innerHTML = '<label>添加数量<input id="ePetMaterialInput" type="number" min="1" step="1" placeholder="例如 3000"></label>';
+      $('#ePetParentHint').textContent = `当前宠物材料：${E.material()}。输入正数增加、负数减少，材料余额最低为 0。不会改动积分或扣分记录。`;
+      $('#ePetParentFields').innerHTML = '<label>修改数量<input id="ePetMaterialInput" type="number" step="1" placeholder="例如 +3000 增加 / -1000 减少"></label>';
     } else if (mode === 'level') {
       $('#ePetParentHint').textContent = '按当前规则设置宠物阶段，不会改动积分、材料或扣分记录。';
       $('#ePetParentFields').innerHTML = `<label>当前宠物等级<select id="ePetLevelInput"><option value="0">蛋阶段</option><option value="1">LV1 · 第一阶段</option><option value="2">LV2 · 成长阶段</option><option value="3">LV3 · 最终阶段</option></select></label>`;
@@ -636,7 +636,7 @@
     if (roleName === '孩子') return toast('请切换到爸爸或妈妈页面后管理宠物');
     if (petParentMode === 'material') {
       const value = Number($('#ePetMaterialInput').value);
-      if (!Number.isInteger(value) || value <= 0) return toast('请输入大于 0 的整数');
+      if (!Number.isSafeInteger(value) || value === 0) return toast('请输入非零整数：正数增加，负数减少');
       E.changeMaterial(value);
     } else if (petParentMode === 'level') {
       const level = Number($('#ePetLevelInput').value);
